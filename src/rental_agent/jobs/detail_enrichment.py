@@ -30,23 +30,14 @@ log = get_logger(__name__)
 _LIFECYCLES = ("ACTIVE", "CANDIDATE", "REAPPEARED")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Detail-page enrichment pass")
-    parser.add_argument("--limit", type=int, default=0, help="max listings (0 = all)")
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="re-extract even when the page content is unchanged (bad prior query)",
-    )
-    args = parser.parse_args()
-
-    configure_logging()
+def run_detail_enrichment(*, limit: int = 0, force: bool = False) -> dict[str, int]:
+    """Enrich active inventory from listing pages; returns status counts."""
     settings = load_settings()
     search_key = settings.providers.search_provider_api_key
     openai_key = settings.providers.openai_api_key
     if search_key is None or openai_key is None:
         log.error("detail_enrichment_missing_keys")
-        return 1
+        return {"MISSING_KEYS": 1}
     extract_client = TavilyExtractClient(search_key.get_secret_value())
     llm = OpenAiLlmExecutor(
         settings.providers.llm_default_model_id,
@@ -64,8 +55,8 @@ def main() -> int:
                 .order_by(CanonicalListing.last_seen_at.desc())
             ).scalars()
         ]
-    if args.limit:
-        ids = ids[: args.limit]
+    if limit:
+        ids = ids[:limit]
     log.info("detail_enrichment_start", listings=len(ids))
 
     counts: dict[str, int] = {}
@@ -73,7 +64,7 @@ def main() -> int:
         with factory() as session:
             service = ListingContentEnrichmentService(session, llm, extract_client)
             try:
-                outcome = service.enrich(listing_id, force=args.force)
+                outcome = service.enrich(listing_id, force=force)
                 session.commit()
             except Exception as exc:  # noqa: BLE001 - batch keeps going
                 session.rollback()
@@ -90,7 +81,21 @@ def main() -> int:
             facts=outcome.facts_written,
         )
     log.info("detail_enrichment_done", counts=counts)
-    return 0
+    return counts
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Detail-page enrichment pass")
+    parser.add_argument("--limit", type=int, default=0, help="max listings (0 = all)")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="re-extract even when the page content is unchanged (bad prior query)",
+    )
+    args = parser.parse_args()
+    configure_logging()
+    counts = run_detail_enrichment(limit=args.limit, force=args.force)
+    return 1 if "MISSING_KEYS" in counts else 0
 
 
 if __name__ == "__main__":

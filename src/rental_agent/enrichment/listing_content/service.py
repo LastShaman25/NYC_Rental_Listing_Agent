@@ -49,7 +49,9 @@ log = get_logger(__name__)
 
 EXTRACT_ENDPOINT = "https://api.tavily.com/extract"
 TASK_TYPE = "listing_detail_extract"
-PROMPT_VERSION = "detail-extract-v2"  # v2: + monthly_rent_usd gross-rent extraction
+# v3: multi-unit pages report the LOWEST advertised gross rent (owner's
+# posting rule 4; complex pages were returning null under "THIS unit").
+PROMPT_VERSION = "detail-extract-v3"
 OUTPUT_SCHEMA_VERSION = "1"
 MAX_PAGE_CHARS = 14_000
 
@@ -173,9 +175,10 @@ _EXTRACTION_INSTRUCTIONS = (
     "fee_status NO_FEE only if the page explicitly says no fee; FEE_CHARGED only if "
     "a broker fee is explicitly stated; otherwise UNKNOWN, with the quote in "
     "fee_evidence. monthly_rent_usd: the GROSS monthly asking rent explicitly "
-    "listed for THIS unit, in whole US dollars (never net effective rent, never "
-    "price per square foot, never a sale price); quote the exact price text in "
-    "rent_evidence; null if not clearly stated. "
+    "listed, in whole US dollars (never net effective rent, never price per "
+    "square foot, never a sale price). If the page advertises multiple units or "
+    "a price range, use the LOWEST advertised gross monthly rent. Quote the "
+    "exact price text in rent_evidence; null only if no rent is stated at all. "
     "Never infer, never guess, never use outside knowledge."
 )
 

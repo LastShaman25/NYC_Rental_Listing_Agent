@@ -132,6 +132,16 @@ def run_weekday_refresh(
         admission = AdmissionService(session).evaluate_candidates()
         session.commit()
 
+    # A manual full re-acquisition starts from a wiped inventory, so it also
+    # re-runs detail enrichment automatically (owner expectation 2026-08-18:
+    # one button yields a complete, page-verified inventory). Scheduled runs
+    # keep enrichment incremental via the weekday cadence.
+    enrichment_counts: dict[str, int] = {}
+    if trigger is e.RefreshTriggerType.MANUAL:
+        from rental_agent.jobs.detail_enrichment import run_detail_enrichment
+
+        enrichment_counts = run_detail_enrichment()
+
     # Finalize the refresh-run record honestly (06 §10.2).
     with factory() as session:
         from rental_agent.db.repositories.runs import RefreshRunRepository
@@ -162,6 +172,11 @@ def run_weekday_refresh(
                 "useful_options": usefulness.useful,
                 "activated": admission.activated,
                 "excluded": admission.excluded,
+                **(
+                    {"enriched": enrichment_counts.get("ENRICHED", 0)}
+                    if enrichment_counts
+                    else {}
+                ),
             },
         )
         session.commit()

@@ -594,6 +594,59 @@ Center" (projects/8071777848628563239), 5 screens; design system = Kinetic
 Mapview (same as md/DESIGN.md). Screens' HTML + screenshots cached in the
 session scratchpad.
 
+One-click workspace (2026-08-18, owner request): start_app.ps1 now hosts the
+FULL environment — [1-3] Docker engine + DB container + readiness, [4/5]
+local Qwen GPU server (probes 127.0.0.1:8601; if down, spawns
+start_local_llm.ps1 in a minimized PowerShell window — non-blocking, model
+ready in ~30-60s), [5/5] uvicorn webui on 8600 + browser open.
+STARTAPP_TEST=1 still skips model+UI. Verified live: parse-clean, test mode
+passes, and the exact Qwen-launch block restored the (session-orphaned)
+model server to GPU-ready. start_app.bat unchanged (CRLF wrapper).
+
+NJ GEOCODING BUG fixed (2026-08-18, owner report: "one in Massachusetts,
+none in NJ"): TWO root causes — (1) NYC GeoSearch force-matches ANY input
+into the five boroughs, so Fort Lee addresses landed in Queens/Bronx (and
+passed boundary checks because the wrong points sit inside NYC polygons!);
+(2) normalization stamped administrative_area='NY' for NJ towns (its NJ
+check looked for "NJ" in the locality string, but labels are bare "Fort
+Lee"), so Census was queried with the wrong state (→ the New-Hampshire-
+border point). FIXES in location/service.py: NJ localities skip
+nyc_geosearch entirely; query uses admin area NJ; and a NEW post-geocode
+verification gate — result must fall inside its claimed locality's boundary
+polygon (config.geographic_boundary, all 8 regions) or it is REJECTED (next
+provider / honest FAILED; PR-LOC-001 never-place-at-a-guess). normalization
+now maps the three NJ towns to 'NJ'. Data repaired: 29 NJ addresses reset +
+re-geocoded → Fort Lee 15/17 mapped, JC 9/11, Hoboken 0/1 (fails honestly),
+all IN_SCOPE at true NJ coordinates (~40.85,-73.96); 18 transit rows added.
+Guard also protects NYC borough labels from cross-borough mismatches. Gate:
+159 tests, ruff, mypy clean.
+
+Chained re-acquisition VERIFIED end-to-end (2026-08-18): the owner's 12:36
+click ran discard → 3-source discovery (160 discovered, 133 persisted) →
+geocode 113 → activate 85 → AUTO-ENRICH 109, in one button. 32 floor plans,
+JC 10/10 laundry facts (rent.com extraction confirmed working). Extraction
+prompt v3: multi-unit pages now report the LOWEST advertised gross rent
+(owner posting rule 4; "THIS unit" made complexes return null). Residual
+honest gap: 7 JC + 1 Hoboken complex pages state no extractable price even
+at v3 (dynamic pricing widgets) — they stay rent-unknown/hidden from the
+map; source links available. NOTE: mid-flight my earlier enrichment task was
+wiped by that discard (74 NO_LINK from deleted ids) — harmless, superseded.
+NOTE: discard's ops.job TRUNCATE CASCADE also clears ops.model_execution
+audit (FK) — accepted under "completely discard".
+
+"No change after re-acquisition" diagnosed (2026-08-18, owner report): the
+discard-runs WORKED (owner clicked twice: 12:25+12:30; inventory rebuilt to
+133 incl rent_com's 14) but looked unchanged because (a) the persisted map
+view never re-fits, so Fort Lee (17 geocoded w/ rent!) sat off-screen;
+(b) most rent_com JC/Hoboken snippets lack prices (2/12) and the map hides
+rent-unknown listings; (c) acquisition uses ZERO OpenAI — enrichment is the
+OpenAI step and each discard wiped it without re-running. FIXES: manual full
+re-acquisition now CHAINS detail enrichment automatically (detail_enrichment
+refactored to run_detail_enrichment(limit, force) callable; enriched count in
+run summary); map gained a "Fit all" button (clears ka-map-view, refits);
+enrichment sweep launched for the current fresh inventory. Gate: 159 tests,
+ruff, mypy clean.
+
 Third source + reset semantics (2026-08-18, owner decisions): (1) RENT.COM
 adapter (acquisition/adapters/rent_com_search.py) — probed extract-friendly
 (~12k chars incl laundry/price/floor-plan), so NJ finally gets deep

@@ -10,6 +10,9 @@
 <button class="bg-surface-glass backdrop-blur-md border border-border-subtle rounded-full px-4 py-1.5 font-display-table text-display-table text-primary hover:bg-surface-container-lowest transition-colors shadow-sm flex items-center gap-2" onclick="drawPolygon()" type="button">
 <span class="material-symbols-outlined text-[18px]">polyline</span> Draw area filter
 </button>
+<button class="bg-surface-glass backdrop-blur-md border border-border-subtle rounded-full px-4 py-1.5 font-display-table text-display-table text-on-surface-variant hover:text-primary hover:bg-surface-container-lowest transition-colors shadow-sm flex items-center gap-2" onclick="fitAllMarkers()" title="Show every listing, including new areas (clears the saved view)" type="button">
+<span class="material-symbols-outlined text-[18px]">fit_screen</span> Fit all
+</button>
 {% if filters.geometry %}
 <a class="bg-surface-glass backdrop-blur-md border border-border-subtle rounded-full px-4 py-1.5 font-display-table text-display-table text-on-surface-variant hover:bg-surface-container-lowest transition-colors shadow-sm flex items-center gap-2" href="{{ clear_geometry_url }}">
 <span class="material-symbols-outlined text-[18px]">close</span> Clear drawn area
@@ -284,6 +287,10 @@ No listings match the filters.
         }
         html += '</div>';
         body.innerHTML = html;
+    }
+    function fitAllMarkers() {
+        sessionStorage.removeItem('ka-map-view');
+        if (group.length) { map.fitBounds(L.featureGroup(group).getBounds().pad(0.15)); }
     }
     function drawPolygon() {
         const drawer = new L.Draw.Polygon(map, { shapeOptions: { color: '#004ac6', weight: 2 } });

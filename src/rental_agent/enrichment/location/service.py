@@ -24,6 +24,25 @@ from rental_agent.db.models import Address, ProviderRequest, Source
 
 log = get_logger(__name__)
 
+# NJ localities (owner scope). NYC GeoSearch must never see these — it
+# force-matches any input into the five boroughs (2026-08-18 bug: Fort Lee
+# listings landed in Queens/Bronx) — and Census must be queried with NJ.
+NJ_LOCALITIES = frozenset({"Jersey City", "Hoboken", "Fort Lee"})
+
+# Locality -> boundary region for post-geocode verification: a result that
+# lands outside its claimed locality's polygon is rejected (a wrong coordinate
+# is worse than none — PR-LOC-001 "never place at a guess").
+_LOCALITY_REGION_CODES = {
+    "Jersey City": "NJ_JERSEY_CITY",
+    "Hoboken": "NJ_HOBOKEN",
+    "Fort Lee": "NJ_FORT_LEE",
+    "Manhattan": "NYC_MANHATTAN",
+    "Brooklyn": "NYC_BROOKLYN",
+    "Queens": "NYC_QUEENS",
+    "Bronx": "NYC_BRONX",
+    "Staten Island": "NYC_STATEN_ISLAND",
+}
+
 
 @dataclass
 class GeocodeRunSummary:
@@ -61,23 +80,64 @@ class GeocodeService:
             self._source_ids[provider_code] = source.source_id
         return self._source_ids[provider_code]
 
+    def _within_locality_boundary(
+        self, locality: str | None, longitude: float, latitude: float
+    ) -> bool:
+        """True when the point is inside its locality's polygon (or no polygon
+        exists to check against)."""
+        region_code = _LOCALITY_REGION_CODES.get(locality or "")
+        if region_code is None:
+            return True
+        from sqlalchemy import text as sql_text
+
+        covered = self._s.execute(
+            sql_text(
+                "SELECT ST_Covers(geometry, "
+                "ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography) "
+                "FROM config.geographic_boundary WHERE region_code = :region"
+            ).bindparams(lon=longitude, lat=latitude, region=region_code)
+        ).scalar()
+        return bool(covered) if covered is not None else True
+
     def geocode_address(self, address: Address) -> bool:
         """Geocode one address in place; returns True when coordinates landed."""
         if not address.address_line_1:
             return False
-        query_text = f"{address.address_line_1}, {address.locality}, "
-        query_text += address.administrative_area
+        # NJ localities: the stored admin area may wrongly say NY (normalization
+        # default); the query must say NJ or Census matches the wrong state.
+        admin_area = "NJ" if address.locality in NJ_LOCALITIES else address.administrative_area
+        query_text = f"{address.address_line_1}, {address.locality}, {admin_area}"
         request = GeocodeRequest(
             formatted_address=query_text,
             locality=address.locality,
-            administrative_area=address.administrative_area,
+            administrative_area=admin_area,
         )
         now = datetime.now(tz=UTC)
         for geocoder in self._geocoders:
+            if (
+                address.locality in NJ_LOCALITIES
+                and geocoder.provider_code == "nyc_geosearch"
+            ):
+                continue  # NYC-only geocoder force-matches NJ into the boroughs
             result = geocoder.geocode(request)  # network call; no open transaction
             self._record_request(geocoder.provider_code, query_text, result, now)
-            if result.status is not e.ProviderRequestStatus.SUCCEEDED:
+            if (
+                result.status is not e.ProviderRequestStatus.SUCCEEDED
+                or result.longitude is None
+                or result.latitude is None
+            ):
                 continue
+            if not self._within_locality_boundary(
+                address.locality, result.longitude, result.latitude
+            ):
+                log.warning(
+                    "geocode_outside_locality",
+                    provider=geocoder.provider_code,
+                    locality=address.locality,
+                    lat=result.latitude,
+                    lon=result.longitude,
+                )
+                continue  # wrong-place match: try the next provider
             address.location_point = f"SRID=4326;POINT({result.longitude} {result.latitude})"
             address.location_precision = result.precision.value
             address.geocoder_source_id = self._source_id(geocoder.provider_code)

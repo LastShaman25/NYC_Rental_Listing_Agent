@@ -158,7 +158,10 @@ class NormalizationService:
                 address = Address(
                     address_line_1=raw_address,
                     locality=locality,
-                    administrative_area="NY" if "NJ" not in locality.upper() else "NJ",
+                    # NJ towns arrive as bare labels ("Fort Lee"), never "NJ".
+                    administrative_area=(
+                        "NJ" if locality in ("Jersey City", "Hoboken", "Fort Lee") else "NY"
+                    ),
                     formatted_address=raw_address,
                     address_fingerprint=fingerprint,
                 )
@@ -169,7 +172,9 @@ class NormalizationService:
             # the building chain exists; boundary stays UNRESOLVED for review.
             address = Address(
                 locality=locality,
-                administrative_area="NY",
+                administrative_area=(
+                    "NJ" if locality in ("Jersey City", "Hoboken", "Fort Lee") else "NY"
+                ),
                 formatted_address=f"[address unresolved] {row.source_url}",
                 address_fingerprint=f"unresolved:{row.source_url}",
             )
