@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "rental-agent-ui",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": [
+        "run",
+        "--no-sync",
+        "streamlit",
+        "run",
+        "src/rental_agent/ui/app.py",
+        "--server.address",
+        "127.0.0.1",
+        "--server.port",
+        "8501",
+        "--server.headless",
+        "true"
+      ],
+      "port": 8501
+    }
+  ]
+}

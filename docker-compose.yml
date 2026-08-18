@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    container_name: rental_agent_db
+    environment:
+      POSTGRES_USER: rental
+      POSTGRES_PASSWORD: rental_local_dev
+      POSTGRES_DB: rental_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      # Named volume, NOT a bind mount: this project lives in OneDrive and
+      # syncing live PostgreSQL data files corrupts the cluster.
+      - rental_agent_pgdata:/var/lib/postgresql/data
+      - ./scripts/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rental -d rental_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  rental_agent_pgdata:

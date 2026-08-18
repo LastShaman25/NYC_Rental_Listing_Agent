@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Local data roots (media, raw artifacts, exports, logs, backups)
+local_data/
+
+# OS
+Thumbs.db
+.DS_Store
