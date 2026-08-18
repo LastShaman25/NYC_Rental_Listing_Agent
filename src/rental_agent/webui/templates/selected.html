@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Selected - RentAgent{% endblock %}
+{% block page_label %}SELECTED FOR POSTING{% endblock %}
+{% block main %}
+<main class="flex-1 overflow-y-auto p-panel-margin pb-20 flex flex-col gap-panel-margin custom-scrollbar">
+<div>
+<h1 class="font-headline-panel text-[24px] leading-tight font-bold text-on-surface mb-1">Selected</h1>
+<p class="text-on-surface-variant font-body-compact">Properties you selected for marketing posts. Selection is manual-only.</p>
+</div>
+<div class="glass-panel rounded-xl p-4">
+<div class="flex justify-between items-center border-b border-border-subtle pb-2 mb-3">
+<h2 class="font-headline-panel text-headline-panel font-bold text-on-surface">Selected listings ({{ rows | length }})</h2>
+<form action="/actions/export" method="post" class="flex items-center gap-3">
+<label class="flex items-center gap-2 cursor-pointer font-body-compact text-body-compact text-on-surface-variant">
+<input class="rounded border-border-subtle text-primary focus:ring-primary w-4 h-4" name="include_inactive" type="checkbox" value="1"/>
+Include inactive
+</label>
+<button class="px-3 py-1.5 bg-primary text-on-primary font-display-table text-display-table rounded-DEFAULT hover:bg-primary-container transition-colors flex items-center gap-1" type="submit">
+<span class="material-symbols-outlined text-[14px]">download</span> Export CSV
+</button>
+</form>
+</div>
+{% if exported %}
+<div class="mb-3 px-3 py-2 bg-secondary-container/30 border border-secondary-container/50 rounded-DEFAULT font-body-compact text-body-compact text-on-secondary-container">
+Exported to <code>{{ exported }}</code>
+</div>
+{% endif %}
+{% if inactive_count %}
+<div class="mb-3 px-3 py-2 bg-status-warning/10 border border-status-warning/30 rounded-DEFAULT font-body-compact text-body-compact text-status-warning">
+{{ inactive_count }} selected listing(s) are missing/inactive &mdash; kept for history, excluded from the default export.
+</div>
+{% endif %}
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-border-subtle">
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Address</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Layout</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Rent</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Lifecycle</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Laundry</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal text-right">Actions</th>
+</tr>
+</thead>
+<tbody>
+{% for row in rows %}
+<tr class="border-b border-border-subtle hover:bg-surface-container transition-colors">
+<td class="py-1.5 text-xs"><a class="text-on-surface hover:text-primary font-semibold" href="/listing/{{ row.listing_id }}">{{ row.address }}</a></td>
+<td class="py-1.5 text-xs text-on-surface">{{ row.layout }}</td>
+<td class="py-1.5 text-xs text-on-surface font-semibold">{{ row.rent }}</td>
+<td class="py-1.5 text-xs text-on-surface">{{ row.lifecycle }}</td>
+<td class="py-1.5 text-xs text-on-surface-variant">{{ row.laundry }}</td>
+<td class="py-1.5 text-xs text-right whitespace-nowrap">
+{% if client_presets %}
+<form action="/actions/shortlist" class="inline-flex items-center gap-1 mr-3" method="post">
+<input name="listing_id" type="hidden" value="{{ row.listing_id }}"/>
+<input name="next" type="hidden" value="/selected"/>
+<select class="h-6 px-1 border border-border-subtle rounded-DEFAULT font-body-compact text-[11px] bg-surface-container-lowest" name="preset_id" required>
+<option disabled selected value="">Save for client…</option>
+{% for preset in client_presets %}<option value="{{ preset.id }}">{{ preset.label }}</option>{% endfor %}
+</select>
+<button class="text-primary hover:underline font-semibold" type="submit">Save</button>
+</form>
+{% endif %}
+<a class="inline-flex items-center gap-1 text-primary hover:underline font-semibold mr-3" href="/studio?listing={{ row.listing_id }}"><span class="material-symbols-outlined text-[13px]">edit_note</span>Studio</a>
+<a class="inline-flex items-center gap-1 text-on-surface-variant hover:text-primary font-semibold mr-3" href="/listing/{{ row.listing_id }}"><span class="material-symbols-outlined text-[13px]">visibility</span>View</a>
+<form action="/actions/select/{{ row.listing_id }}" class="inline" method="post">
+<input name="next" type="hidden" value="/selected"/>
+<button class="inline-flex items-center gap-1 text-error hover:underline font-semibold" type="submit" title="Remove from marketing selection">
+<span class="material-symbols-outlined text-[13px]">bookmark_remove</span>Deselect
+</button>
+</form>
+</td>
+</tr>
+{% else %}
+<tr><td class="py-3 text-xs text-on-surface-variant" colspan="6">Nothing selected yet &mdash; use the Inventory map.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</main>
+{% endblock %}

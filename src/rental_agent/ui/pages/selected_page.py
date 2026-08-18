@@ -9,6 +9,7 @@ import streamlit as st
 from rental_agent.config.settings import load_settings
 from rental_agent.ui import queries
 from rental_agent.ui.app import session_factory
+from rental_agent.ui.theme import dense_table, panel_header
 
 # Cells starting with these can execute as spreadsheet formulas (06 §28.5).
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t")
@@ -35,38 +36,71 @@ def render() -> None:
             "excluded from the default export."
         )
     if rows:
-        st.dataframe(
+        dense_table(
             [
                 {
-                    "Address": r["address"],
-                    "Layout": r["layout"],
-                    "Rent": r["rent"],
-                    "Lifecycle": r["lifecycle"],
-                    "Laundry": r["laundry"],
+                    "address": r["address"],
+                    "layout": r["layout"],
+                    "rent": r["rent"],
+                    "lifecycle": r["lifecycle"],
+                    "laundry": r["laundry"],
                 }
                 for r in rows
-            ],
-            use_container_width=True,
+            ]
         )
         include_inactive = st.checkbox("Include inactive selected listings in export")
-        if st.button("Export selected to CSV"):
-            path = _export(active if not include_inactive else rows)
-            st.success(f"Exported to `{path}`")
+        if st.button("Export selected to CSV (with companion files)"):
+            import uuid as _uuid
+
+            from rental_agent.exports.csv_export import export_listings
+
+            settings_local = load_settings()
+            settings_local.paths.ensure_exists()
+            chosen = active if not include_inactive else rows
+            with factory() as session:
+                result = export_listings(
+                    session,
+                    settings_local.paths.exports,
+                    listing_ids=[_uuid.UUID(r["listing_id"]) for r in chosen],
+                    export_type="selected",
+                )
+            st.success(
+                f"Exported to `{result.directory}` — "
+                + ", ".join(f"{name}: {count}" for name, count in result.counts.items())
+            )
     else:
         st.info("Nothing selected yet — use the Inventory page.")
 
     st.subheader("Client shortlists")
     with factory() as session:
         presets = queries.shortlist_presets(session)
-        if not presets:
-            st.caption("No client presets yet (create one on the Inventory page).")
-        for preset in presets:
-            entries = queries.shortlist_entries(session, preset.client_search_preset_id)
-            with st.expander(f"{preset.label} ({len(entries)} entries)"):
-                if entries:
-                    st.dataframe(entries, use_container_width=True)
-                else:
-                    st.caption("Empty shortlist.")
+        preset_entries = {
+            preset.client_search_preset_id: queries.shortlist_entries(
+                session, preset.client_search_preset_id
+            )
+            for preset in presets
+        }
+    if not presets:
+        st.caption("No client presets yet (create one on the Inventory page).")
+        return
+    clients_col, entries_col = st.columns([1, 2], gap="small")
+    with clients_col, st.container(border=True):
+        panel_header("Active Clients", f"{len(presets)} presets")
+        client_labels = [
+            f"{p.label} · {len(preset_entries[p.client_search_preset_id])}" for p in presets
+        ]
+        chosen_index = st.radio(
+            "Client",
+            range(len(presets)),
+            format_func=lambda i: client_labels[i],
+            label_visibility="collapsed",
+        )
+        chosen_preset = presets[chosen_index or 0]
+    with entries_col, st.container(border=True):
+        panel_header(chosen_preset.label, "Shortlist entries")
+        dense_table(
+            preset_entries[chosen_preset.client_search_preset_id], empty="Empty shortlist."
+        )
 
 
 def _export(rows) -> str:

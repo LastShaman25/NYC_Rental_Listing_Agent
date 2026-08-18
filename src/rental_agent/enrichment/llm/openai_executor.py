@@ -31,8 +31,10 @@ SYSTEM_INSTRUCTIONS = (
     "schema; use UNKNOWN/CONFLICTING values rather than guessing."
 )
 
-# Task types allowed to use hosted web-search tooling (04 §19A.3).
-WEB_SEARCH_TASK_TYPES = frozenset({"commute_research"})
+# Task types allowed to use hosted web-search tooling (04 §19A.3; nearby POI
+# research added by owner decision 2026-08-18 — restaurant/store facts must
+# come from real web sources, never model memory).
+WEB_SEARCH_TASK_TYPES = frozenset({"commute_research", "nearby_poi_research"})
 
 
 class OpenAiLlmExecutor:

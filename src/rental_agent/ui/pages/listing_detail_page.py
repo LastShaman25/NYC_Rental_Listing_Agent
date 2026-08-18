@@ -2,6 +2,7 @@
 
 import urllib.parse
 import uuid
+from datetime import UTC, datetime
 
 import streamlit as st
 
@@ -9,6 +10,7 @@ from rental_agent.enrichment.commute.research import CommuteResearchService
 from rental_agent.enrichment.llm.openai_executor import OpenAiLlmExecutor
 from rental_agent.ui import queries
 from rental_agent.ui.app import session_factory
+from rental_agent.ui.theme import dense_table
 
 
 def render() -> None:
@@ -35,17 +37,36 @@ def render() -> None:
 
     listing = detail["listing"]
     address = detail["address"]
-    st.subheader(address.formatted_address if address else "[address unresolved]")
+    title_col, price_col = st.columns([3, 1])
+    with title_col:
+        st.subheader(address.formatted_address if address else "[address unresolved]")
+        if address and address.locality:
+            st.caption(address.locality)
+    with price_col:
+        rent = (
+            f"${listing.monthly_rent_minor // 100:,}/mo"
+            if listing.monthly_rent_minor
+            else "rent unknown"
+        )
+        st.markdown(
+            f'<div class="ka-card-price" style="font-size:22px;text-align:right">{rent}</div>',
+            unsafe_allow_html=True,
+        )
+    days_on_market = (datetime.now(tz=UTC) - listing.first_seen_at).days
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Layout", listing.layout_class)
-    c2.metric(
-        "Rent",
-        f"${listing.monthly_rent_minor // 100:,}" if listing.monthly_rent_minor else "unknown",
-    )
-    c3.metric("Lifecycle", listing.lifecycle_status)
-    c4.metric("Laundry", detail["laundry_label"])
+    c2.metric("Lifecycle", listing.lifecycle_status)
+    c3.metric("Laundry", detail["laundry_label"])
+    c4.metric("Days on market", days_on_market)
+    chips = [detail["laundry_label"]]
+    if listing.indoor_laundry_badge_eligible:
+        chips.append("In-unit W/D badge")
     if detail["selection"] is not None and detail["selection"].selection_status == "SELECTED":
-        st.success("Selected for marketing")
+        chips.append("Selected for marketing")
+    st.markdown(
+        "".join(f'<span class="ka-mini">{chip}</span>' for chip in chips),
+        unsafe_allow_html=True,
+    )
     for override in detail["overrides"]:
         st.warning(
             f"Active override on `{override.field_name}`: {override.override_value} "
@@ -67,18 +88,17 @@ def render() -> None:
                 if not options:
                     continue
                 st.markdown(f"**{mode}**")
-                st.dataframe(
+                dense_table(
                     [
                         {
-                            "Station": t["stop"],
-                            "Operator": t["operator"],
-                            "Straight-line": f"{t['straight_line_m']} m",
-                            "Rank": t["rank"],
-                            "Status": t["usefulness"],
+                            "station": t["stop"],
+                            "operator": t["operator"],
+                            "straight-line": f"{t['straight_line_m']} m",
+                            "rank": t["rank"],
+                            "status": t["usefulness"],
                         }
                         for t in options
-                    ],
-                    use_container_width=True,
+                    ]
                 )
         else:
             st.caption(
@@ -88,7 +108,7 @@ def render() -> None:
 
     with tab_overview:
         st.markdown("**Source links**")
-        st.dataframe(detail["links"], use_container_width=True)
+        dense_table(detail["links"], empty="No source links.")
         if listing.description_current:
             st.markdown("**Description (contact-redacted)**")
             st.write(listing.description_current)
@@ -102,9 +122,9 @@ def render() -> None:
         st.markdown("**Why does each value say what it says?**")
         for fact_key, assertions in facts.items():
             with st.expander(f"{fact_key} ({len(assertions)} assertion(s))"):
-                st.dataframe(assertions, use_container_width=True)
+                dense_table(assertions)
         st.markdown("**Event history**")
-        st.dataframe(
+        dense_table(
             [
                 {
                     "time": ev.event_time,
@@ -114,7 +134,7 @@ def render() -> None:
                 }
                 for ev in detail["events"]
             ],
-            use_container_width=True,
+            empty="No events recorded.",
         )
 
     with tab_commutes:
@@ -131,18 +151,32 @@ def render() -> None:
                     else "n/a"
                 )
                 transfers = commute["transfers"] if commute["transfers"] is not None else "?"
-                st.markdown(
-                    f"**{commute['destination']}** — {minutes}, transfers: {transfers} · "
-                    f"confidence {commute['confidence']} · validation {commute['validation']}"
-                )
-                if commute["summary"]:
-                    st.caption(commute["summary"])
-                if commute["routes"]:
-                    st.caption("Routes: " + ", ".join(commute["routes"]))
-                with st.expander("Sources and validation detail"):
-                    for source in commute["sources"]:
-                        st.markdown(f"- [{source.get('title') or source['url']}]({source['url']})")
-                    st.json(commute["validation_reasons"] or {})
+                with st.container(border=True):
+                    name_col, range_col = st.columns([3, 1])
+                    name_col.markdown(f"**{commute['destination']}**")
+                    range_col.markdown(
+                        f'<div class="ka-card-price" style="text-align:right">{minutes}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    chip_html = "".join(
+                        f'<span class="ka-mini">{chip}</span>'
+                        for chip in (
+                            f"transfers {transfers}",
+                            f"confidence {commute['confidence']}",
+                            f"validation {commute['validation']}",
+                        )
+                    )
+                    st.markdown(chip_html, unsafe_allow_html=True)
+                    if commute["summary"]:
+                        st.caption(commute["summary"])
+                    if commute["routes"]:
+                        st.caption("Routes: " + ", ".join(commute["routes"]))
+                    with st.expander("Sources and validation detail"):
+                        for source in commute["sources"]:
+                            st.markdown(
+                                f"- [{source.get('title') or source['url']}]({source['url']})"
+                            )
+                        st.json(commute["validation_reasons"] or {})
         else:
             st.caption("No commute research yet for this listing.")
 

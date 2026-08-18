@@ -27,6 +27,8 @@ from rental_agent.db.models import (
     ListingEvent,
     ListingSourceLink,
     MarketingSelection,
+    MediaAsset,
+    MediaAssociation,
     RefreshRun,
     ReviewIssue,
     Source,
@@ -95,6 +97,24 @@ def dashboard_summary(session: Session) -> dict[str, int]:
     }
 
 
+def freshness_buckets(session: Session) -> list[tuple[str, int]]:
+    """Active-inventory last-seen ages for the dashboard freshness chart."""
+    rows = session.execute(
+        text(
+            "SELECT CASE"
+            " WHEN now() - last_seen_at <= interval '1 day' THEN '0-1d'"
+            " WHEN now() - last_seen_at <= interval '3 days' THEN '1-3d'"
+            " WHEN now() - last_seen_at <= interval '7 days' THEN '3-7d'"
+            " ELSE '7d+' END AS bucket, count(*) AS n"
+            " FROM app.canonical_listing"
+            " WHERE lifecycle_status IN ('ACTIVE', 'CANDIDATE', 'REAPPEARED')"
+            " GROUP BY 1"
+        )
+    ).all()
+    counts = {bucket: n for bucket, n in rows}
+    return [(bucket, counts.get(bucket, 0)) for bucket in ("0-1d", "1-3d", "3-7d", "7d+")]
+
+
 def recent_refresh_runs(session: Session, limit: int = 8) -> list[dict[str, Any]]:
     rows = (
         session.execute(select(RefreshRun).order_by(RefreshRun.started_at.desc()).limit(limit))
@@ -142,6 +162,11 @@ class InventoryFilters:
     min_rent_minor: int | None = None
     locality: str | None = None
     selected_only: bool = False
+    # Only listings with a known monthly rent (the map/inventory workspace
+    # excludes rent-unknown listings by owner decision 2026-08-18).
+    has_rent: bool = False
+    # Only listings with a floor plan on file (listing- or building-level).
+    has_floor_plan: bool = False
     # Spatial filters (08 §16.2): map bounds as (min_lon, min_lat, max_lon,
     # max_lat), or a drawn GeoJSON geometry (Polygon). Listings without
     # coordinates never match a spatial filter (no guessed placement).
@@ -185,6 +210,22 @@ def inventory(session: Session, filters: InventoryFilters) -> list[dict[str, Any
         query = query.where(Address.locality.ilike(f"%{filters.locality}%"))
     if filters.selected_only:
         query = query.where(MarketingSelection.selection_status == "SELECTED")
+    if filters.has_rent:
+        query = query.where(CanonicalListing.monthly_rent_minor.is_not(None))
+    if filters.has_floor_plan:
+        query = query.where(
+            select(MediaAssociation.media_association_id)
+            .join(MediaAsset, MediaAsset.media_asset_id == MediaAssociation.media_asset_id)
+            .where(
+                MediaAsset.media_type == "FLOOR_PLAN",
+                (
+                    MediaAssociation.canonical_listing_id
+                    == CanonicalListing.canonical_listing_id
+                )
+                | (MediaAssociation.building_id == CanonicalListing.building_id),
+            )
+            .exists()
+        )
     if filters.bounds is not None:
         min_lon, min_lat, max_lon, max_lat = filters.bounds
         query = query.where(
@@ -210,6 +251,7 @@ def inventory(session: Session, filters: InventoryFilters) -> list[dict[str, Any
         results.append(
             {
                 "listing_id": str(listing.canonical_listing_id),
+                "building_id": str(listing.building_id),
                 "layout": listing.layout_class,
                 "rent_minor": listing.monthly_rent_minor,
                 "rent": (
@@ -385,12 +427,87 @@ def transit_for_listing(session: Session, listing_id: uuid.UUID) -> list[dict[st
             "stop": stop_name,
             "operator": operator,
             "straight_line_m": access.straight_line_distance_m,
+            "walking_m": access.walking_distance_m,
+            "walk_min": (
+                round(access.walking_duration_s / 60)
+                if access.walking_duration_s is not None
+                else None
+            ),
             "rank": access.proximity_rank,
             "usefulness": access.usefulness_status,
             "dataset": access.dataset_version,
         }
         for access, stop_name, operator in rows
     ]
+
+
+def listings_in_building(session: Session, building_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Sibling units at the same property, for the unit-selection UI."""
+    rows = session.execute(
+        select(CanonicalListing)
+        .where(CanonicalListing.building_id == building_id)
+        .order_by(CanonicalListing.monthly_rent_minor.asc().nulls_last())
+    ).scalars()
+    return [
+        {
+            "listing_id": str(listing.canonical_listing_id),
+            "layout": listing.layout_class,
+            "rent_minor": listing.monthly_rent_minor,
+            "rent": (
+                f"${listing.monthly_rent_minor // 100:,}"
+                if listing.monthly_rent_minor is not None
+                else "unknown"
+            ),
+            "lifecycle": listing.lifecycle_status,
+        }
+        for listing in rows
+    ]
+
+
+def floor_plans_for_listing(
+    session: Session, listing_id: uuid.UUID, building_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    """Floor-plan media for a listing (listing-level or building-level links)."""
+    rows = session.execute(
+        select(MediaAsset, MediaAssociation)
+        .join(MediaAssociation, MediaAssociation.media_asset_id == MediaAsset.media_asset_id)
+        .where(
+            MediaAsset.media_type == "FLOOR_PLAN",
+            (MediaAssociation.canonical_listing_id == listing_id)
+            | (MediaAssociation.building_id == building_id),
+        )
+        .order_by(MediaAssociation.confidence.desc())
+    ).all()
+    return [
+        {
+            "url": asset.source_url,
+            "storage_ref": asset.storage_ref,
+            "availability": asset.availability_status,
+            "level": association.association_level,
+            "confidence": association.confidence,
+        }
+        for asset, association in rows
+    ]
+
+
+def laundry_counts(session: Session) -> dict[str, int]:
+    """How many active-ish listings have confirmed in-unit / building laundry."""
+    in_unit_types = (
+        "IN_UNIT_WASHER_DRYER_CONFIRMED",
+        "IN_UNIT_WASHER_ONLY",
+        "IN_UNIT_DRYER_ONLY",
+        "IN_UNIT_HOOKUP_ONLY",
+    )
+    rows = session.execute(
+        select(CanonicalListing.laundry_type, func.count()).group_by(
+            CanonicalListing.laundry_type
+        )
+    ).all()
+    counts = {laundry_type: n for laundry_type, n in rows}
+    return {
+        "in_unit": sum(counts.get(t, 0) for t in in_unit_types),
+        "building": counts.get("BUILDING_SHARED_LAUNDRY", 0),
+    }
 
 
 # -- review queue --------------------------------------------------------------

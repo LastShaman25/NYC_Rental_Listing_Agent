@@ -178,3 +178,65 @@ class ClientShortlistService:
         )
         self._s.flush()
         return entry
+
+    def update_profile(
+        self,
+        *,
+        client_search_preset_id: uuid.UUID,
+        profile: dict,
+        actor: str,
+        actor_type: e.ActorType,
+    ) -> ClientSearchPreset:
+        """Store the client's needs profile (owner decision 2026-08-18).
+
+        Lives inside filter_definition["client_profile"] — describes needs
+        (budget, layouts, income, gender, ...), never identity/contact data;
+        the label stays a pseudonym.
+        """
+        _require_human(actor_type)
+        preset = self._s.get(ClientSearchPreset, client_search_preset_id)
+        if preset is None:
+            raise ValueError("client preset not found")
+        before = dict(preset.filter_definition or {})
+        updated = dict(preset.filter_definition or {})
+        updated["client_profile"] = profile
+        preset.filter_definition = updated
+        self._s.add(
+            AuditActionLog(
+                actor=actor,
+                actor_type=actor_type.value,
+                action_type="client_profile_updated",
+                target_type="client_search_preset",
+                target_id=client_search_preset_id,
+                before_values={"client_profile": before.get("client_profile")},
+                after_values={"client_profile": profile},
+            )
+        )
+        self._s.flush()
+        return preset
+
+    def archive_preset(
+        self,
+        *,
+        client_search_preset_id: uuid.UUID,
+        actor: str,
+        actor_type: e.ActorType,
+    ) -> ClientSearchPreset:
+        """Soft-remove a client: preset + entries stay for audit, hidden from UI."""
+        _require_human(actor_type)
+        preset = self._s.get(ClientSearchPreset, client_search_preset_id)
+        if preset is None:
+            raise ValueError("client preset not found")
+        preset.archived_at = _now()
+        self._s.add(
+            AuditActionLog(
+                actor=actor,
+                actor_type=actor_type.value,
+                action_type="client_preset_archived",
+                target_type="client_search_preset",
+                target_id=client_search_preset_id,
+                after_values={"label": preset.label},
+            )
+        )
+        self._s.flush()
+        return preset

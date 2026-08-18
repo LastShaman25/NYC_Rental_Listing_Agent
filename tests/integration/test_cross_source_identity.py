@@ -198,7 +198,7 @@ def test_candidate_generation_is_replay_safe(db_session: Session, seeded_source)
         url="https://b.test/2",
         native_id="B2",
         address="100 Water St",
-        rent_minor=350000,
+        rent_minor=353000,  # similar but NOT identical -> candidate, not strong match
     )
     service.process_observation(first, discovery_method=e.DiscoveryMethod.SEARCH_INDEX)
     service.process_observation(second, discovery_method=e.DiscoveryMethod.DIRECT)
@@ -208,3 +208,68 @@ def test_candidate_generation_is_replay_safe(db_session: Session, seeded_source)
     db_session.commit()
     assert db_session.execute(select(func.count()).select_from(DuplicateCandidate)).scalar() == 1
     assert db_session.execute(select(func.count()).select_from(CanonicalListing)).scalar() == 2
+
+
+def test_strong_multi_field_attaches_identical_listing(db_session: Session, seeded_source):
+    """Same building + same layout + IDENTICAL rent + no unit labels anywhere ->
+    one canonical listing with a MEDIUM-confidence STRONG_MULTI_FIELD link."""
+    service = NormalizationService(db_session)
+    first = _persist(
+        db_session,
+        seeded_source,
+        url="https://a.test/1",
+        native_id="A1",
+        address="200 Strong Street",
+        rent_minor=350000,
+    )
+    outcome1 = service.process_observation(first, discovery_method=e.DiscoveryMethod.SEARCH_INDEX)
+    db_session.commit()
+    other = _second_source(db_session)
+    second = _persist(
+        db_session,
+        other,
+        url="https://b.test/2",
+        native_id="B2",
+        address="200 Strong St",
+        rent_minor=350000,
+    )
+    outcome2 = service.process_observation(second, discovery_method=e.DiscoveryMethod.DIRECT)
+    db_session.commit()
+    assert outcome2.classification == "MATCHED_EXISTING"
+    assert outcome2.canonical_listing_id == outcome1.canonical_listing_id
+    assert db_session.execute(select(func.count()).select_from(CanonicalListing)).scalar() == 1
+    links = db_session.execute(select(ListingSourceLink)).scalars().all()
+    methods = {link.identity_method for link in links}
+    assert "STRONG_MULTI_FIELD" in methods
+    strong_link = next(x for x in links if x.identity_method == "STRONG_MULTI_FIELD")
+    assert strong_link.identity_confidence == "MEDIUM"
+
+
+def test_strong_match_refuses_ambiguity(db_session: Session, seeded_source):
+    """TWO identical same-building listings -> ambiguous; no auto-attach."""
+    service = NormalizationService(db_session)
+    for i, native in enumerate(["A1", "A2"]):
+        obs = _persist(
+            db_session,
+            seeded_source,
+            url=f"https://a.test/{i}",
+            native_id=native,
+            address="300 Ambiguous Avenue",
+            rent_minor=400000,
+        )
+        service.process_observation(obs, discovery_method=e.DiscoveryMethod.SEARCH_INDEX)
+        db_session.commit()
+    other = _second_source(db_session)
+    third = _persist(
+        db_session,
+        other,
+        url="https://b.test/9",
+        native_id="B9",
+        address="300 Ambiguous Ave",
+        rent_minor=400000,
+    )
+    outcome = service.process_observation(third, discovery_method=e.DiscoveryMethod.DIRECT)
+    db_session.commit()
+    # Ambiguity -> a third listing plus review candidates, never a guess.
+    assert outcome.classification == "NEW"
+    assert db_session.execute(select(func.count()).select_from(CanonicalListing)).scalar() == 3

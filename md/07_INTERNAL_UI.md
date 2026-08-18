@@ -9,6 +9,7 @@
 | Controlling documents | `00_PROJECT_OVERVIEW.md` through `06_DATABASE_AND_REFRESH_PIPELINE.md` |
 | Primary dependent | `08_IMPLEMENTATION_PLAN.md` |
 | Initial framework | Local Streamlit |
+| Framework revision (2026-08-18, owner decision) | Local FastAPI + Jinja2 (`rental_agent.webui`) serving the owner's Stitch "Metro Rental Command Center" screens pixel-exactly (visual source of truth: Stitch project 8071777848628563239 / `md/DESIGN.md`; functional source of truth: this document — no scores, commute ranges with confidence, manual-only selection/shortlists, no fabricated data). Leaflet replaces streamlit-folium behind the same marker semantics. The Streamlit implementation (`rental_agent.ui`) remains runnable during transition (`uv run --no-sync streamlit run src/rental_agent/ui/app.py`); `start_app.bat` launches the FastAPI app at http://127.0.0.1:8600. |
 
 This document specifies the single-user local review interface for browsing canonical rental inventory, inspecting evidence and enrichment, resolving issues, manually selecting apartments and media, monitoring refresh operations, and generating local CSV exports.
 
@@ -1230,3 +1231,4 @@ The UI specification is satisfied when tests demonstrate:
 | --- | --- |
 | 2026-08-16 | Initial local Streamlit internal UI specification created from the project overview, product requirements, schema, acquisition, location/transit, media, and local database/refresh specifications. |
 | 2026-08-17 | Owner decision B7: §15.1 revised — commute rows show web-researched estimates (sources, confidence, research date), on-demand research request action, Google Maps Embed view for manual verification. Primary map remains Leaflet via streamlit-folium. |
+| 2026-08-18 | Owner supplied `md/DESIGN.md` ("Kinetic Mapview System"); it now controls the visual design (§27 guidance subordinated where they differ): Inter typography, glass panels, desaturated slate palette, 4px radii, dense tables, caps labels, rectangular status-accent map markers, compact filter chips, CartoDB Positron basemap. |

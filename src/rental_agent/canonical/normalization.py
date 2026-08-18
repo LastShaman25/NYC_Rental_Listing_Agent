@@ -221,6 +221,21 @@ class NormalizationService:
                 self._s.add(unit)
                 self._s.flush()
 
+        # Hierarchy step 3 (02 §9.2 STRONG_MULTI_FIELD): no unit evidence, but a
+        # strict conjunction of strong signals — same building AND same layout
+        # AND identical rent AND fresh overlap AND exactly ONE such match.
+        # Ambiguity (multiple matches) falls through to duplicate candidates.
+        if unit is None:
+            strong = self._strong_multi_field_match(building, observation, row)
+            if strong is not None:
+                return self._attach_cross_source_link(
+                    row,
+                    strong,
+                    discovery_method,
+                    identity_method=e.IdentityMethod.STRONG_MULTI_FIELD,
+                    identity_confidence=e.IdentityConfidence.MEDIUM,
+                )
+
         listing = CanonicalListing(
             building_id=building.building_id,
             unit_id=unit.unit_id if unit is not None else None,
@@ -324,14 +339,59 @@ class NormalizationService:
                 observation.availability.source_status_text,
             )
 
+    def _strong_multi_field_match(
+        self,
+        building: Building,
+        observation: ParsedSourceObservation,
+        row: SourceObservation,
+    ) -> CanonicalListing | None:
+        """Exactly one same-building listing matching layout + identical rent.
+
+        Cross-source only: a listing already linked to THIS source is never a
+        match — one source exposing two identical native IDs in a building
+        almost certainly means two distinct physical units. Any ambiguity
+        (multiple matches) returns None (02 §9.3)."""
+        layout = observation.layout.proposed_layout_class
+        rent = observation.pricing.monthly_rent_minor
+        if layout in (e.LayoutClass.UNKNOWN, e.LayoutClass.CONFLICTING) or rent is None:
+            return None
+        same_source_link = (
+            select(ListingSourceLink.listing_source_link_id)
+            .where(
+                ListingSourceLink.canonical_listing_id == CanonicalListing.canonical_listing_id,
+                ListingSourceLink.source_id == row.source_id,
+            )
+            .exists()
+        )
+        matches = (
+            self._s.execute(
+                select(CanonicalListing).where(
+                    CanonicalListing.building_id == building.building_id,
+                    CanonicalListing.layout_class == layout.value,
+                    CanonicalListing.monthly_rent_minor == rent,  # identical, not similar
+                    CanonicalListing.unit_id.is_(None),  # unit-labeled listings need unit proof
+                    CanonicalListing.lifecycle_status.notin_(
+                        [e.LifecycleStatus.MERGED.value, e.LifecycleStatus.INACTIVE.value]
+                    ),
+                    ~same_source_link,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return matches[0] if len(matches) == 1 else None
+
     def _attach_cross_source_link(
         self,
         row: SourceObservation,
         listing: CanonicalListing,
         discovery_method: e.DiscoveryMethod,
+        *,
+        identity_method: e.IdentityMethod = e.IdentityMethod.EXACT_ADDRESS_AND_UNIT,
+        identity_confidence: e.IdentityConfidence = e.IdentityConfidence.HIGH,
     ) -> NormalizationOutcome:
-        """Second source for the same building+unit: one canonical listing,
-        separate provenance (PR-ACQ-003)."""
+        """New source for an existing canonical listing: one listing, separate
+        provenance (PR-ACQ-003)."""
         link = ListingSourceLink(
             canonical_listing_id=listing.canonical_listing_id,
             source_id=row.source_id,
@@ -343,8 +403,8 @@ class NormalizationService:
             last_seen_at=row.observed_at,
             link_status=e.LinkStatus.ACTIVE.value,
             discovery_method=discovery_method.value,
-            identity_method=e.IdentityMethod.EXACT_ADDRESS_AND_UNIT.value,
-            identity_confidence=e.IdentityConfidence.HIGH.value,
+            identity_method=identity_method.value,
+            identity_confidence=identity_confidence.value,
             identity_rule_version=IDENTITY_RULE_VERSION,
         )
         self._s.add(link)

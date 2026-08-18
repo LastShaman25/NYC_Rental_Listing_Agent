@@ -4,6 +4,7 @@ import streamlit as st
 
 from rental_agent.ui import queries
 from rental_agent.ui.app import session_factory
+from rental_agent.ui.theme import dense_table
 
 
 def render() -> None:
@@ -16,17 +17,15 @@ def render() -> None:
         jobs = queries.job_queue_summary(session)
 
     st.subheader("Refresh runs")
-    st.dataframe(runs, use_container_width=True) if runs else st.info("No runs yet.")
+    dense_table(runs, empty="No runs yet.")
 
     st.subheader("Source runs")
+    dense_table(source_runs, empty="No source runs yet.")
     if source_runs:
-        st.dataframe(source_runs, use_container_width=True)
         st.caption(
             "health_gate=False on search-discovered runs is by design: search "
             "absence never counts as disappearance evidence (B3)."
         )
-    else:
-        st.info("No source runs yet.")
 
     st.subheader("Job queue")
-    st.dataframe(jobs, use_container_width=True) if jobs else st.info("Queue is empty.")
+    dense_table(jobs, empty="Queue is empty.")

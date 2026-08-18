@@ -36,25 +36,84 @@ log = get_logger(__name__)
 
 SCHEDULE_VERSION = "v1"
 
+# Listing-graph tables purged on a manual full re-acquisition (owner decision
+# 2026-08-18: "completely discard the old data"). CASCADE pulls in every
+# FK-dependent (buildings, units, links, events, transit access, selections,
+# shortlist ENTRIES, media associations...). Deliberately preserved: sources,
+# client presets/profiles, destinations, transit stops/routes, boundaries,
+# run history, model-execution audit.
+_DISCARD_TABLES = (
+    "app.address",
+    "app.canonical_listing",
+    "raw.source_observation",
+    "app.media_asset",
+    "app.fact_assertion",
+    "app.fact_resolution",
+    "app.review_issue",
+    "app.human_override",
+    "ops.job",
+)
 
-def run_weekday_refresh(trigger: e.RefreshTriggerType = e.RefreshTriggerType.SCHEDULED) -> int:
+
+def discard_inventory(factory) -> None:
+    """Wipe the listing graph before a fresh manual acquisition."""
+    from sqlalchemy import text as sql_text
+
+    with factory() as session:
+        before = session.execute(
+            sql_text("SELECT count(*) FROM app.canonical_listing")
+        ).scalar()
+        session.execute(sql_text(f"TRUNCATE {', '.join(_DISCARD_TABLES)} CASCADE"))
+        session.commit()
+    log.info("inventory_discarded", listings_discarded=before)
+    print(f"discarded {before} existing listings (fresh re-acquisition)")
+
+
+def run_weekday_refresh(
+    trigger: e.RefreshTriggerType = e.RefreshTriggerType.SCHEDULED,
+    logical_key: str | None = None,
+) -> int:
     settings = load_settings()
     configure_logging(settings.paths.logs)
     factory = build_session_factory(build_engine(settings))
 
     local_date = datetime.now(tz=ZoneInfo(settings.timezone)).date()
-    logical_key = f"weekday_inventory_refresh:{local_date}:{SCHEDULE_VERSION}"
+    if logical_key is None:
+        logical_key = f"weekday_inventory_refresh:{local_date}:{SCHEDULE_VERSION}"
     log.info("refresh_start", key=logical_key, trigger=trigger.value)
 
-    adapter = StreetEasySearchAdapter(
-        build_search_provider_from_settings(settings), max_results_per_query=15
+    from rental_agent.acquisition.adapters.apartments_com_search import (
+        ApartmentsComSearchAdapter,
     )
-    acquisition = AcquisitionRunner(factory).run_source(
-        adapter,
-        logical_run_key=logical_key,
-        trigger_type=trigger,
-        discovery_method=e.DiscoveryMethod.SEARCH_INDEX,
-    )
+    from rental_agent.contracts.providers import SourceAdapter
+
+    if trigger is e.RefreshTriggerType.MANUAL:
+        # Owner decision 2026-08-18: a manual full re-acquisition always
+        # starts from a clean slate.
+        discard_inventory(factory)
+
+    from rental_agent.acquisition.adapters.rent_com_search import RentComSearchAdapter
+
+    search_provider = build_search_provider_from_settings(settings)
+    adapters: list[SourceAdapter] = [
+        StreetEasySearchAdapter(search_provider, max_results_per_query=15),
+        # Second source (owner decision 2026-08-18): Fort Lee coverage.
+        ApartmentsComSearchAdapter(search_provider, max_results_per_query=15),
+        # Third source (owner decision 2026-08-18): extract-friendly NJ
+        # coverage with Jersey City sub-area partitions.
+        RentComSearchAdapter(search_provider, max_results_per_query=15),
+    ]
+    acquisitions = [
+        AcquisitionRunner(factory).run_source(
+            adapter,
+            logical_run_key=logical_key,
+            trigger_type=trigger,
+            discovery_method=e.DiscoveryMethod.SEARCH_INDEX,
+        )
+        for adapter in adapters
+    ]
+    total_discovered = sum(a.discovered for a in acquisitions)
+    total_new = sum(a.persisted_new for a in acquisitions)
     normalized = drain_normalize_jobs(factory, discovery_method=e.DiscoveryMethod.SEARCH_INDEX)
 
     with factory() as session:
@@ -86,7 +145,7 @@ def run_weekday_refresh(trigger: e.RefreshTriggerType = e.RefreshTriggerType.SCH
         )
         status = (
             e.RefreshRunStatus.SUCCEEDED
-            if acquisition.status is e.SourceRunStatus.HEALTHY
+            if all(a.status is e.SourceRunStatus.HEALTHY for a in acquisitions)
             else e.RefreshRunStatus.PARTIAL_SUCCESS
         )
         runs.set_status(
@@ -94,8 +153,8 @@ def run_weekday_refresh(trigger: e.RefreshTriggerType = e.RefreshTriggerType.SCH
             status,
             completed_at=datetime.now(tz=UTC),
             summary_counts={
-                "discovered": acquisition.discovered,
-                "persisted_new": acquisition.persisted_new,
+                "discovered": total_discovered,
+                "persisted_new": total_new,
                 "normalized": normalized,
                 "geocoded": geocode.geocoded,
                 "scope_evaluated": scope.evaluated,
@@ -110,16 +169,16 @@ def run_weekday_refresh(trigger: e.RefreshTriggerType = e.RefreshTriggerType.SCH
     log.info(
         "refresh_complete",
         status=status.value,
-        discovered=acquisition.discovered,
-        new=acquisition.persisted_new,
+        discovered=total_discovered,
+        new=total_new,
         normalized=normalized,
         geocoded=geocode.geocoded,
         activated=admission.activated,
         excluded=admission.excluded,
     )
     print(
-        f"refresh {status.value}: discovered={acquisition.discovered} "
-        f"new={acquisition.persisted_new} normalized={normalized} "
+        f"refresh {status.value}: discovered={total_discovered} "
+        f"new={total_new} normalized={normalized} "
         f"geocoded={geocode.geocoded} activated={admission.activated} "
         f"excluded={admission.excluded}"
     )
@@ -127,7 +186,13 @@ def run_weekday_refresh(trigger: e.RefreshTriggerType = e.RefreshTriggerType.SCH
 
 
 if __name__ == "__main__":
-    trigger = (
-        e.RefreshTriggerType.MANUAL if "--manual" in sys.argv else e.RefreshTriggerType.SCHEDULED
-    )
-    raise SystemExit(run_weekday_refresh(trigger))
+    if "--manual" in sys.argv:
+        # Manual re-acquisition gets its own run key so it truly re-runs even
+        # after the scheduled run already succeeded today (owner 2026-08-18).
+        stamp = datetime.now(tz=UTC).strftime("%Y-%m-%d_%H%M%S")
+        raise SystemExit(
+            run_weekday_refresh(
+                e.RefreshTriggerType.MANUAL, logical_key=f"manual_refresh:{stamp}"
+            )
+        )
+    raise SystemExit(run_weekday_refresh(e.RefreshTriggerType.SCHEDULED))

@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+{% block title %}Map &amp; Inventory - RentAgent{% endblock %}
+{% block page_label %}MAP &amp; INVENTORY{% endblock %}
+{% block main %}
+<div class="flex-1 overflow-hidden relative">
+<!-- Map Canvas (Background) -->
+<div class="absolute inset-0 z-0" id="inventory-map"></div>
+<!-- Floating Map Controls -->
+<div class="absolute top-4 left-1/2 -translate-x-1/2 flex gap-2 z-20">
+<button class="bg-surface-glass backdrop-blur-md border border-border-subtle rounded-full px-4 py-1.5 font-display-table text-display-table text-primary hover:bg-surface-container-lowest transition-colors shadow-sm flex items-center gap-2" onclick="drawPolygon()" type="button">
+<span class="material-symbols-outlined text-[18px]">polyline</span> Draw area filter
+</button>
+{% if filters.geometry %}
+<a class="bg-surface-glass backdrop-blur-md border border-border-subtle rounded-full px-4 py-1.5 font-display-table text-display-table text-on-surface-variant hover:bg-surface-container-lowest transition-colors shadow-sm flex items-center gap-2" href="{{ clear_geometry_url }}">
+<span class="material-symbols-outlined text-[18px]">close</span> Clear drawn area
+</a>
+{% endif %}
+</div>
+<!-- Floating abbreviated property detail (opens on marker / card click) -->
+<div class="absolute left-1/2 top-16 -translate-x-1/2 w-[360px] bg-surface-glass backdrop-blur-xl border border-border-subtle rounded-DEFAULT shadow-lg z-30 hidden flex-col" id="mini-detail">
+<div class="flex items-center justify-between p-3 border-b border-border-subtle bg-surface-container-lowest rounded-t-DEFAULT">
+<h2 class="font-headline-panel text-headline-panel text-on-surface">Property</h2>
+<button class="text-on-surface-variant hover:text-on-surface p-1" onclick="hideMiniDetail()" type="button"><span class="material-symbols-outlined text-[18px]">close</span></button>
+</div>
+<div class="p-3 max-h-[420px] overflow-y-auto custom-scrollbar" id="mini-detail-body"></div>
+</div>
+<!-- Left Floating Panel: Filters -->
+<form action="/inventory" class="absolute left-4 top-4 bottom-4 w-72 bg-surface-glass backdrop-blur-xl border border-border-subtle rounded-DEFAULT shadow-sm flex flex-col z-20" id="filters-form" method="get">
+<input id="geometry-input" name="geometry" type="hidden" value="{{ filters.geometry or '' }}"/>
+<div class="flex items-center justify-between p-3 border-b border-border-subtle">
+<h2 class="font-headline-panel text-headline-panel text-on-surface">Filters</h2>
+<span class="font-label-caps text-label-caps text-on-surface-variant">{{ unit_count }} UNITS</span>
+</div>
+<div class="p-4 flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-6">
+<div class="flex flex-col gap-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">PRICE RANGE</label>
+<div class="flex items-center gap-2">
+<input class="w-full h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest focus:border-primary" name="min_rent" placeholder="Min" type="number" value="{{ filters.min_rent or '' }}"/>
+<span class="text-outline-variant">-</span>
+<input class="w-full h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest focus:border-primary" name="max_rent" placeholder="Max" type="number" value="{{ filters.max_rent or '' }}"/>
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">LAYOUT</label>
+<div class="flex flex-wrap gap-2">
+{% for chip in layout_chips %}
+<label class="cursor-pointer">
+<input class="peer sr-only" name="layout" type="checkbox" value="{{ chip.value }}" {% if chip.on %}checked{% endif %}/>
+<span class="inline-block px-3 py-1 border rounded-DEFAULT font-body-compact text-body-compact transition-colors {% if chip.on %}border-primary bg-primary text-on-primary{% else %}border-border-subtle bg-surface-container-lowest text-on-surface hover:border-primary{% endif %}">{{ chip.label }}</span>
+</label>
+{% endfor %}
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">LOCALITY</label>
+<input class="w-full h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest focus:border-primary" name="locality" placeholder="e.g. Hoboken" type="text" value="{{ filters.locality or '' }}"/>
+</div>
+<div class="flex flex-col gap-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">LAUNDRY</label>
+<div class="flex flex-col gap-1">
+<label class="flex items-center gap-2 cursor-pointer">
+<input class="rounded border-border-subtle text-primary focus:ring-primary w-4 h-4" name="in_unit" type="checkbox" value="1" {% if filters.in_unit %}checked{% endif %}/>
+<span class="font-body-compact text-body-compact text-on-surface">In-unit <span class="text-on-surface-variant">({{ laundry_counts.in_unit }} confirmed)</span></span>
+</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input class="rounded border-border-subtle text-primary focus:ring-primary w-4 h-4" name="building" type="checkbox" value="1" {% if filters.building %}checked{% endif %}/>
+<span class="font-body-compact text-body-compact text-on-surface">Building <span class="text-on-surface-variant">({{ laundry_counts.building }} confirmed)</span></span>
+</label>
+{% if laundry_counts.in_unit == 0 and laundry_counts.building == 0 %}
+<p class="font-body-compact text-[11px] text-on-surface-variant mt-1">No listings have confirmed laundry facts yet &mdash; search snippets rarely state laundry, so these filters currently match nothing.</p>
+{% endif %}
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">LIFECYCLE</label>
+<div class="flex flex-col gap-1">
+{% for chip in lifecycle_chips %}
+<label class="flex items-center gap-2 cursor-pointer">
+<input class="rounded border-border-subtle text-primary focus:ring-primary w-4 h-4" name="lifecycle" type="checkbox" value="{{ chip.value }}" {% if chip.on %}checked{% endif %}/>
+<span class="font-body-compact text-body-compact text-on-surface">{{ chip.label }}</span>
+</label>
+{% endfor %}
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">FLOOR PLAN</label>
+<label class="flex items-center gap-2 cursor-pointer">
+<input class="rounded border-border-subtle text-primary focus:ring-primary w-4 h-4" name="floor_plan" type="checkbox" value="1" {% if filters.floor_plan %}checked{% endif %}/>
+<span class="font-body-compact text-body-compact text-on-surface">Floor plan on file</span>
+</label>
+</div>
+<label class="flex items-center gap-2 cursor-pointer">
+<input class="rounded border-border-subtle text-primary focus:ring-primary w-4 h-4" name="selected_only" type="checkbox" value="1" {% if filters.selected_only %}checked{% endif %}/>
+<span class="font-body-compact text-body-compact text-on-surface">Selected for marketing only</span>
+</label>
+</div>
+<div class="p-3 border-t border-border-subtle bg-surface-container-low flex justify-end gap-2 rounded-b-DEFAULT">
+<a class="px-3 py-1.5 text-on-surface-variant font-display-table text-display-table hover:bg-surface-variant rounded-DEFAULT" href="/inventory">Clear</a>
+<button class="px-3 py-1.5 bg-primary text-on-primary font-display-table text-display-table rounded-DEFAULT hover:bg-primary-container" type="submit">Apply</button>
+</div>
+</form>
+<!-- Right Floating Panel: Inventory List -->
+<div class="absolute right-4 top-4 bottom-4 w-[340px] bg-surface-glass backdrop-blur-xl border border-border-subtle rounded-DEFAULT shadow-sm flex flex-col z-20">
+<div class="flex items-center justify-between p-3 border-b border-border-subtle bg-surface-container-lowest rounded-t-DEFAULT">
+<div>
+<h2 class="font-headline-panel text-headline-panel text-on-surface">Inventory List</h2>
+<p class="font-label-caps text-label-caps text-on-surface-variant">{{ properties | length }} PROPERTIES &middot; {{ unit_count }} UNITS{% if unmapped_count %} &middot; {{ unmapped_count }} UNMAPPED{% endif %}</p>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto custom-scrollbar p-2 flex flex-col gap-2">
+{% for prop in properties[:list_cap] %}
+<div class="bg-surface-container-lowest border rounded-DEFAULT p-3 hover:border-primary transition-colors group {% if prop.selected %}border-status-shortlisted shadow-[0_0_0_1px_#3B82F6]{% elif prop.warn %}border-border-subtle border-l-4 border-l-status-warning{% else %}border-border-subtle{% endif %}" id="card-{{ prop.primary.listing_id }}">
+<div class="flex justify-between items-start mb-2">
+<div>
+<div class="flex items-center gap-1">
+{% if prop.selected %}<span class="material-symbols-outlined text-status-shortlisted text-[14px]" style="font-variation-settings: 'FILL' 1;">star</span>{% endif %}
+<a class="font-display-table text-display-table text-on-surface hover:text-primary cursor-pointer" onclick="showMiniDetail('{{ prop.primary.listing_id }}')">{{ prop.address }}</a>
+</div>
+<div class="font-body-compact text-body-compact text-on-surface-variant">{{ prop.locality or '' }}{% if prop.units | length > 1 %} &middot; {{ prop.units | length }} units{% endif %}</div>
+</div>
+<div class="font-headline-panel text-headline-panel text-primary whitespace-nowrap">{{ prop.rent_label }}</div>
+</div>
+{% if prop.units | length > 1 %}
+<div class="flex gap-2 mb-2 flex-wrap">
+{% for unit in prop.units %}
+<a class="font-label-caps text-label-caps px-2 py-0.5 rounded border transition-colors cursor-pointer {% if unit.selected %}border-status-shortlisted text-status-shortlisted bg-status-shortlisted/5{% else %}border-border-subtle text-on-surface-variant bg-surface-container hover:border-primary hover:text-primary{% endif %}" onclick="showMiniDetail('{{ unit.listing_id }}')">{{ unit.layout_label }} {{ unit.rent }}</a>
+{% endfor %}
+</div>
+{% else %}
+<div class="flex gap-3 mb-3 flex-wrap">
+<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-container px-2 py-0.5 rounded">{{ prop.primary.layout_label }}</span>
+{% if prop.primary.laundry_chip %}<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-container px-2 py-0.5 rounded">{{ prop.primary.laundry_chip }}</span>{% endif %}
+</div>
+{% endif %}
+{% if prop.warn %}
+<div class="text-[11px] text-status-warning mb-2 font-display-table flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]">warning</span> {{ prop.lifecycle }}
+</div>
+{% endif %}
+<div class="flex gap-2">
+{% if prop.units | length == 1 %}
+<form action="/actions/select/{{ prop.primary.listing_id }}" class="flex-1" method="post">
+<input name="next" type="hidden" value="{{ request.url.path }}?{{ request.url.query }}"/>
+{% if prop.primary.selected %}
+<button class="w-full h-7 border border-status-shortlisted text-status-shortlisted rounded-DEFAULT font-display-table text-[12px] hover:bg-status-shortlisted hover:text-on-primary transition-colors flex items-center justify-center gap-1" type="submit">
+<span class="material-symbols-outlined text-[14px]">bookmark_remove</span> Deselect
+</button>
+{% else %}
+<button class="w-full h-7 bg-primary text-on-primary rounded-DEFAULT font-display-table text-[12px] hover:bg-primary-container transition-colors flex items-center justify-center gap-1" type="submit">
+<span class="material-symbols-outlined text-[14px]">ad_units</span> Select for Ad
+</button>
+{% endif %}
+</form>
+{% else %}
+<a class="flex-1 h-7 border border-primary text-primary rounded-DEFAULT font-display-table text-[12px] hover:bg-primary hover:text-on-primary transition-colors flex items-center justify-center gap-1 cursor-pointer" onclick="showMiniDetail('{{ prop.primary.listing_id }}')">
+<span class="material-symbols-outlined text-[14px]">apartment</span> Choose unit
+</a>
+{% endif %}
+<a class="w-7 h-7 border border-border-subtle text-on-surface-variant rounded-DEFAULT hover:bg-surface-container-high flex items-center justify-center cursor-pointer" onclick="showMiniDetail('{{ prop.primary.listing_id }}')" title="Quick view">
+<span class="material-symbols-outlined text-[14px]">visibility</span>
+</a>
+</div>
+</div>
+{% else %}
+<div class="p-3 font-body-compact text-body-compact text-on-surface-variant">
+No listings match the filters.
+{% if laundry_filter_active %}<br/>Note: laundry filters only match listings with confirmed laundry facts.{% endif %}
+</div>
+{% endfor %}
+{% if properties | length > list_cap %}
+<div class="p-2 font-label-caps text-label-caps text-on-surface-variant text-center">SHOWING FIRST {{ list_cap }} &mdash; REFINE FILTERS</div>
+{% endif %}
+</div>
+</div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<link href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" rel="stylesheet"/>
+<script>
+    const markers = {{ markers_json | safe }};
+    const drawnGeometry = {{ geometry_json | safe }};
+    const clientPresets = {{ client_presets_json | safe }};
+    const map = L.map('inventory-map', { zoomControl: true });
+    map.zoomControl.setPosition('bottomleft');
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
+    const group = [];
+    markers.forEach(m => {
+        const icon = L.divIcon({ className: '', html:
+            `<div class="ka-marker"><span class="accent" style="background:${m.accent}"></span><span class="label">${m.label}</span></div>`,
+            iconSize: null });
+        const marker = L.marker([m.lat, m.lon], { icon }).addTo(map);
+        // Clicking a property marker opens the floating abbreviated detail.
+        marker.on('click', () => { showMiniDetail(m.id); });
+        group.push(marker);
+    });
+    if (drawnGeometry) {
+        L.geoJSON(drawnGeometry, { style: { color: '#004ac6', weight: 2, fillOpacity: 0.06 } }).addTo(map);
+    }
+    // Keep the map view stable across select/deselect reloads (owner
+    // 2026-08-18): restore the saved view instead of re-fitting bounds.
+    const savedView = sessionStorage.getItem('ka-map-view');
+    if (savedView) {
+        const v = JSON.parse(savedView);
+        map.setView([v.lat, v.lng], v.zoom);
+    } else if (group.length) {
+        map.fitBounds(L.featureGroup(group).getBounds().pad(0.15));
+    } else {
+        map.setView([40.73, -73.99], 11);
+    }
+    map.on('moveend', () => {
+        const c = map.getCenter();
+        sessionStorage.setItem('ka-map-view', JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }));
+    });
+
+    function hideMiniDetail() {
+        const panel = document.getElementById('mini-detail');
+        panel.classList.add('hidden'); panel.classList.remove('flex');
+        // Drop the panel marker from the URL so back-navigation stays clean.
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+    function esc(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    async function showMiniDetail(id) {
+        // Record the open panel in the URL hash so the browser Back button
+        // from the full detail page restores this mini detail.
+        history.replaceState(null, '', '#p=' + id);
+        const panel = document.getElementById('mini-detail');
+        const body = document.getElementById('mini-detail-body');
+        body.innerHTML = '<div class="font-body-compact text-body-compact text-on-surface-variant">Loading…</div>';
+        panel.classList.remove('hidden'); panel.classList.add('flex');
+        const d = await (await fetch('/api/listing/' + id + '/card')).json();
+        if (!d.found) { body.innerHTML = 'Not found.'; return; }
+        const nextUrl = window.location.pathname + window.location.search;
+        let html = `
+            <div class="flex justify-between items-start mb-1">
+              <div>
+                <div class="font-display-table text-display-table text-on-surface">${d.selected ? '<span style="color:#3B82F6">★</span> ' : ''}${esc(d.address)}</div>
+                <div class="font-body-compact text-[12px] text-on-surface-variant">${esc(d.locality || '')} · ${esc(d.lifecycle)} · ${d.days_on_market} days on market</div>
+              </div>
+              <div class="font-headline-panel text-headline-panel text-primary whitespace-nowrap">${esc(d.rent)}</div>
+            </div>
+            <div class="mb-2">
+              <span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-container px-2 py-0.5 rounded mr-1">${esc(d.layout)}</span>
+              <span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-container px-2 py-0.5 rounded mr-1">${esc(d.laundry)}</span>
+              <span class="font-label-caps text-label-caps ${d.floor_plan ? 'text-secondary bg-secondary-container/30' : 'text-on-surface-variant bg-surface-container'} px-2 py-0.5 rounded">${d.floor_plan ? 'Floor plan on file' : 'No floor plan on file'}</span>
+            </div>`;
+        if (d.units.length > 1) {
+            html += '<div class="font-label-caps text-label-caps text-on-surface-variant mb-1">UNITS AT THIS PROPERTY</div>';
+            for (const u of d.units) {
+                html += `<a class="flex justify-between py-1 border-b border-border-subtle font-body-compact text-[12px] text-on-surface cursor-pointer hover:text-primary" onclick="showMiniDetail('${u.listing_id}')"><span>${esc(u.label)}${u.listing_id === d.listing_id ? ' (this one)' : ''}</span><span class="font-semibold">${esc(u.rent)}</span></a>`;
+            }
+        }
+        if (d.transit.length) {
+            html += '<div class="font-label-caps text-label-caps text-on-surface-variant mt-2 mb-1">NEARBY TRANSIT</div>';
+            for (const t of d.transit) {
+                const time = t.walk_min !== null ? `${t.walk_min} min walk` : `${t.distance_m} m`;
+                html += `<div class="flex justify-between py-0.5 font-body-compact text-[12px] text-on-surface"><span>${esc(t.stop)} (${esc(t.mode)})</span><span>${time}</span></div>`;
+            }
+        }
+        if (clientPresets.length) {
+            html += `<form action="/actions/shortlist" method="post" class="flex items-center gap-2 mt-3">
+                <input type="hidden" name="listing_id" value="${d.listing_id}"/>
+                <input type="hidden" name="next" value="${esc(nextUrl)}#p=${d.listing_id}"/>
+                <select name="preset_id" required class="flex-1 h-8 px-2 py-0 leading-8 border border-border-subtle rounded-DEFAULT font-body-compact text-[12px] bg-surface-container-lowest">
+                    <option value="" disabled selected>Save for client…</option>
+                    ${clientPresets.map(p => `<option value="${p.id}">${esc(p.label)}</option>`).join('')}
+                </select>
+                <button class="h-8 px-3 border border-primary text-primary rounded-DEFAULT font-display-table text-[12px] hover:bg-primary hover:text-on-primary transition-colors" type="submit">Save</button>
+            </form>`;
+        }
+        html += '<div class="flex gap-2 mt-2">';
+        html += `<form action="/actions/select/${d.listing_id}" method="post" class="flex-1"><input type="hidden" name="next" value="${esc(nextUrl)}#p=${d.listing_id}"/>` +
+            (d.selected
+                ? '<button class="w-full h-7 border border-status-shortlisted text-status-shortlisted rounded-DEFAULT font-display-table text-[12px] hover:bg-status-shortlisted hover:text-on-primary transition-colors" type="submit">Deselect</button>'
+                : '<button class="w-full h-7 bg-primary text-on-primary rounded-DEFAULT font-display-table text-[12px] hover:bg-primary-container transition-colors" type="submit">Select for Ad</button>') +
+            '</form>';
+        html += `<a class="h-7 px-2 border border-primary text-primary rounded-DEFAULT hover:bg-primary hover:text-on-primary transition-colors flex items-center font-display-table text-[12px]" href="/listing/${d.listing_id}">Full detail</a>`;
+        if (d.source_url) {
+            html += `<a class="h-7 px-2 border border-border-subtle text-on-surface-variant rounded-DEFAULT hover:bg-surface-container-high flex items-center font-display-table text-[12px]" href="${esc(d.source_url)}" target="_blank" rel="noopener">Source ↗</a>`;
+        }
+        html += '</div>';
+        body.innerHTML = html;
+    }
+    function drawPolygon() {
+        const drawer = new L.Draw.Polygon(map, { shapeOptions: { color: '#004ac6', weight: 2 } });
+        drawer.enable();
+    }
+    map.on(L.Draw.Event.CREATED, e => {
+        document.getElementById('geometry-input').value = JSON.stringify(e.layer.toGeoJSON().geometry);
+        document.getElementById('filters-form').submit();
+    });
+    // Returning from the full detail page (or a reload) with #p=<id> reopens
+    // the mini detail the user had open.
+    if (window.location.hash.startsWith('#p=')) {
+        showMiniDetail(window.location.hash.slice(3));
+    }
+</script>
+{% endblock %}

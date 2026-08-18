@@ -1,0 +1,12 @@
+# Kinetic Mapview System palette (md/DESIGN.md)
+[theme]
+primaryColor = "#004ac6"
+backgroundColor = "#f7f9fb"
+secondaryBackgroundColor = "#eceef0"
+textColor = "#191c1e"
+
+[server]
+address = "127.0.0.1"
+
+[browser]
+gatherUsageStats = false

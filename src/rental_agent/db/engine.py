@@ -20,6 +20,8 @@ def build_engine(settings: Settings) -> Engine:
         pool_size=settings.db.pool_size,
         pool_pre_ping=True,
         echo=settings.db.echo,
+        # Fail fast when the database container is down (07 §26 error states).
+        connect_args={"connect_timeout": 5},
     )
 
 

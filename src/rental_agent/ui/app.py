@@ -23,6 +23,24 @@ def main() -> None:
     st.set_page_config(page_title="Rental Listing Agent", layout="wide")
     factory, settings = session_factory()
 
+    from rental_agent.ui.theme import apply_theme
+
+    apply_theme()
+
+    # Clear error state instead of hanging when the database is down (07 §26).
+    try:
+        from sqlalchemy import text as sql_text
+
+        with factory() as session:
+            session.execute(sql_text("SELECT 1"))
+    except Exception:
+        st.error(
+            "**Database is not running.** Start it with `docker compose up -d` "
+            "(or just run `start_app.bat`, which starts it automatically), "
+            "make sure Docker Desktop is open, then reload this page."
+        )
+        st.stop()
+
     from rental_agent.ui.pages import (
         dashboard,
         inventory_page,

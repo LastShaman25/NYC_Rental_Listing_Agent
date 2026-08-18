@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Clients - RentAgent{% endblock %}
+{% block page_label %}CLIENT SHORTLISTS{% endblock %}
+{% block main %}
+<main class="flex-1 overflow-y-auto p-panel-margin pb-20 flex gap-panel-margin custom-scrollbar">
+<!-- Left panel: Active Clients -->
+<div class="w-[300px] shrink-0 flex flex-col gap-panel-margin">
+<div class="glass-panel rounded-xl p-0 flex flex-col overflow-hidden">
+<div class="p-4 border-b border-border-subtle bg-surface-container-lowest/50">
+<h2 class="font-display-table text-display-table text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">group</span> Active Clients
+</h2>
+<p class="font-label-caps text-label-caps text-on-surface-variant mt-0.5">{{ presets | length }} PRESETS &middot; PSEUDONYMS ONLY</p>
+</div>
+<div class="flex-1 overflow-y-auto custom-scrollbar">
+{% for preset in presets %}
+<a class="block px-4 py-2.5 border-b border-border-subtle hover:bg-surface-container transition-colors {% if preset.chosen %}bg-primary/5 border-l-2 border-l-primary{% endif %}" href="/clients?client={{ preset.id }}">
+<div class="font-display-table text-[13px] text-on-surface">{{ preset.label }}</div>
+<div class="font-body-compact text-[11px] text-on-surface-variant">{{ preset.count }} entries</div>
+</a>
+{% else %}
+<div class="px-4 py-3 font-body-compact text-[12px] text-on-surface-variant">No client presets yet &mdash; add one below.</div>
+{% endfor %}
+</div>
+<form action="/actions/preset" class="p-3 border-t border-border-subtle flex gap-2" method="post">
+<input class="flex-1 h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest focus:border-primary" name="label" placeholder="New client pseudonym" required type="text"/>
+<button class="px-3 h-8 bg-primary text-on-primary font-display-table text-[12px] rounded-DEFAULT hover:bg-primary-container" type="submit">Add</button>
+</form>
+</div>
+<!-- Add to shortlist -->
+<div class="glass-panel rounded-xl p-4">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant border-b border-border-subtle pb-2 mb-3">ADD APARTMENT TO SHORTLIST</h3>
+<p class="font-body-compact text-[11px] text-on-surface-variant mb-3">Live filter matches are never saved automatically &mdash; only explicit additions here create entries.</p>
+<form action="/actions/shortlist" class="flex flex-col gap-2" method="post">
+<select class="h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="preset_id" required>
+<option value="">Client&hellip;</option>
+{% for preset in presets %}<option value="{{ preset.id }}">{{ preset.label }}</option>{% endfor %}
+</select>
+<select class="h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="listing_id" required>
+<option value="">Listing&hellip;</option>
+{% for row in all_rows %}<option value="{{ row.listing_id }}">{{ row.address }} ({{ row.rent }})</option>{% endfor %}
+</select>
+<input class="h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="note" placeholder="Note (optional)" type="text"/>
+<button class="h-8 bg-primary text-on-primary font-display-table text-[12px] rounded-DEFAULT hover:bg-primary-container" type="submit">Add entry</button>
+</form>
+</div>
+</div>
+<!-- Main column: chosen client's profile + shortlist -->
+<div class="flex-1 min-w-0 flex flex-col gap-panel-margin">
+{% if chosen_id %}
+<div class="glass-panel rounded-xl p-4">
+<div class="flex justify-between items-center border-b border-border-subtle pb-2 mb-3">
+<h2 class="font-label-caps text-label-caps text-on-surface-variant">{{ chosen_label }} &mdash; PROFILE (NEEDS ONLY, PSEUDONYM STAYS)</h2>
+<form action="/actions/archive-client/{{ chosen_id }}" method="post" onsubmit="return confirm('Remove this client? The shortlist is archived (kept in the audit trail) and disappears from the UI.')">
+<button class="px-3 py-1.5 border border-error text-error font-display-table text-[12px] rounded-DEFAULT hover:bg-error hover:text-on-error transition-colors flex items-center gap-1" type="submit">
+<span class="material-symbols-outlined text-[14px]">person_remove</span> Remove client
+</button>
+</form>
+</div>
+<form action="/actions/client-profile/{{ chosen_id }}" class="grid grid-cols-2 md:grid-cols-4 gap-3" method="post">
+<div class="flex flex-col gap-1">
+<label class="font-label-caps text-label-caps text-on-surface-variant">BUDGET MIN $</label>
+<input class="h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="budget_min" type="number" value="{{ profile.get('budget_min', '') }}"/>
+</div>
+<div class="flex flex-col gap-1">
+<label class="font-label-caps text-label-caps text-on-surface-variant">BUDGET MAX $</label>
+<input class="h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="budget_max" type="number" value="{{ profile.get('budget_max', '') }}"/>
+</div>
+<div class="flex flex-col gap-1">
+<label class="font-label-caps text-label-caps text-on-surface-variant">ANNUAL INCOME $</label>
+<input class="h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="annual_income" type="number" value="{{ profile.get('annual_income', '') }}"/>
+{% if income_max_rent %}<span class="font-body-compact text-[10px] text-secondary">40&times; check: max rent {{ income_max_rent }}/mo</span>{% endif %}
+</div>
+<div class="flex flex-col gap-1">
+<label class="font-label-caps text-label-caps text-on-surface-variant">GENDER</label>
+<select class="h-8 px-2 py-0 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="gender">
+<option value="">&mdash;</option>
+<option value="male" {% if profile.get('gender') == 'male' %}selected{% endif %}>Male</option>
+<option value="female" {% if profile.get('gender') == 'female' %}selected{% endif %}>Female</option>
+</select>
+</div>
+<div class="flex flex-col gap-1">
+<label class="font-label-caps text-label-caps text-on-surface-variant">TARGET LAYOUTS</label>
+<div class="flex gap-3 h-8 items-center">
+{% for layout in ('Studio', '1BR', '2BR') %}
+<label class="flex items-center gap-1 cursor-pointer">
+<input class="rounded border-border-subtle text-primary focus:ring-primary w-4 h-4" name="layouts" type="checkbox" value="{{ layout }}" {% if layout in profile.get('layouts', []) %}checked{% endif %}/>
+<span class="font-body-compact text-body-compact text-on-surface">{{ layout }}</span>
+</label>
+{% endfor %}
+</div>
+</div>
+<div class="flex flex-col gap-1">
+<label class="font-label-caps text-label-caps text-on-surface-variant">PREFERRED AREAS</label>
+<input class="h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="areas" placeholder="e.g. LIC, Astoria" type="text" value="{{ profile.get('areas', '') }}"/>
+</div>
+<div class="flex flex-col gap-1">
+<label class="font-label-caps text-label-caps text-on-surface-variant">MOVE-IN</label>
+<input class="h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="move_in" type="date" value="{{ profile.get('move_in', '') }}"/>
+</div>
+<div class="flex flex-col gap-1">
+<label class="font-label-caps text-label-caps text-on-surface-variant">HOUSEHOLD SIZE</label>
+<input class="h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="household_size" type="number" value="{{ profile.get('household_size', '') }}"/>
+</div>
+<div class="flex flex-col gap-1">
+<label class="font-label-caps text-label-caps text-on-surface-variant">PETS</label>
+<select class="h-8 px-2 py-0 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="pets">
+<option value="">&mdash;</option>
+<option value="yes" {% if profile.get('pets') == 'yes' %}selected{% endif %}>Yes</option>
+<option value="no" {% if profile.get('pets') == 'no' %}selected{% endif %}>No</option>
+</select>
+</div>
+<div class="flex flex-col gap-1">
+<label class="font-label-caps text-label-caps text-on-surface-variant">GUARANTOR</label>
+<select class="h-8 px-2 py-0 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="guarantor">
+<option value="">&mdash;</option>
+<option value="yes" {% if profile.get('guarantor') == 'yes' %}selected{% endif %}>Yes</option>
+<option value="no" {% if profile.get('guarantor') == 'no' %}selected{% endif %}>No</option>
+</select>
+</div>
+<div class="flex flex-col gap-1 col-span-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">NOTES</label>
+<input class="h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest" name="notes" type="text" value="{{ profile.get('notes', '') }}"/>
+</div>
+<div class="col-span-2 md:col-span-4 flex justify-end">
+<button class="px-4 h-8 bg-primary text-on-primary font-display-table text-[12px] rounded-DEFAULT hover:bg-primary-container" type="submit">Save profile</button>
+</div>
+</form>
+</div>
+{% endif %}
+<div class="glass-panel rounded-xl p-4">
+<h2 class="font-label-caps text-label-caps text-on-surface-variant border-b border-border-subtle pb-2 mb-3">{{ chosen_label or 'SHORTLIST' }} ENTRIES</h2>
+{% if chosen_entries is not none %}
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-border-subtle">
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Address</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Layout</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Rent</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Lifecycle</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Note</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal text-right">Actions</th>
+</tr>
+</thead>
+<tbody>
+{% for entry in chosen_entries %}
+<tr class="border-b border-border-subtle hover:bg-surface-container transition-colors">
+<td class="py-1.5 text-xs"><a class="text-on-surface hover:text-primary font-semibold" href="/listing/{{ entry.listing_id }}">{{ entry.address }}</a></td>
+<td class="py-1.5 text-xs text-on-surface">{{ entry.layout }}</td>
+<td class="py-1.5 text-xs text-on-surface font-semibold">{{ entry.rent }}</td>
+<td class="py-1.5 text-xs text-on-surface">{{ entry.lifecycle }}</td>
+<td class="py-1.5 text-xs text-on-surface-variant">{{ entry.note }}</td>
+<td class="py-1.5 text-xs text-right">
+<form action="/actions/remove-entry" class="inline" method="post">
+<input name="preset_id" type="hidden" value="{{ chosen_id }}"/>
+<input name="listing_id" type="hidden" value="{{ entry.listing_id }}"/>
+<button class="inline-flex items-center gap-1 text-error hover:underline font-semibold" type="submit">
+<span class="material-symbols-outlined text-[13px]">delete</span>Remove
+</button>
+</form>
+</td>
+</tr>
+{% else %}
+<tr><td class="py-3 text-xs text-on-surface-variant" colspan="6">Empty shortlist &mdash; use "Save for client" on the map or Selected page.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="font-body-compact text-body-compact text-on-surface-variant">Create a client preset to start a shortlist.</p>
+{% endif %}
+</div>
+</div>
+</main>
+{% endblock %}

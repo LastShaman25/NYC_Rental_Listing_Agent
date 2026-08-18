@@ -488,16 +488,400 @@ preference on committing).
   transit usefulness: 385 USEFUL / 233 CANDIDATE. Inventory now:
   **102 ACTIVE / 28 CANDIDATE / 15 EXCLUDED**.
 
+## Session 4 (2026-08-18) — BACKLOG FINISHED; OWNER COMMITTED REPO
+
+- Owner made the initial git commit themselves (d3c477e). Commits now allowed
+  going forward (owner committed voluntarily); still prefer explicit owner
+  instruction before agent-authored commits.
+- 29-hour "running task" investigated: only rental_agent_db Docker container
+  (normal, healthy); no stray processes; all monitors previously stopped.
+- `start_app.bat` created: one-click DB + UI launcher.
+- **Backlog completed, all tested:**
+  1. CSV companion exports (`exports/csv_export.py`): listings/sources/transit/
+     commutes/history.csv, formula-safe, unknown states verbatim; wired into
+     Selected page. 2 tests.
+  2. Walking routes (`enrichment/transit/walking.py`): FOSSGIS OSRM foot server
+     (keyless, fair-use paced), plausibility validation per 04 §12.2
+     (speed band 0.5–2.2 m/s, routed>=straight-line-tolerance), provider failure
+     leaves fields NULL (straight-line never promoted). **Live: 131/131 rank-1
+     candidates routed, 0 failures, 0 warnings.** 4 tests.
+  3. Strong multi-field matching in normalization (hierarchy step 3): same
+     building + same layout + IDENTICAL rent + cross-source only (same-source
+     identical pairs = distinct units!) + exactly one match → attach as
+     STRONG_MULTI_FIELD/MEDIUM; ambiguity refuses. The cross-source-only
+     refinement was caught by the ambiguity test. 2 new tests.
+  4. Disappearance service (`canonical/disappearance.py`): gate-refusal
+     (health_gate required — search runs structurally never inactivate),
+     ACTIVE→MISSING (1 healthy miss), MISSING→REMOVED (≥2 healthy misses +
+     ≥36h), canonical INACTIVE only when unsupported + no lifecycle override,
+     in-source reappearance flips MISSING→ACTIVE, mass-inactivation circuit
+     breaker (min(50, 25% of active), BLOCKING issue, nothing applied when
+     tripped). 5 tests. NOT yet called by the weekday pipeline — activates only
+     when a directly-verifiable (non-search) source exists.
+  5. Media pipeline core (`enrichment/media/pipeline.py`, Pillow added):
+     https-only + domain allowlist + private-host block, size cap, signature-
+     based typing (JPEG/PNG/WebP), safe decode, metadata-stripped thumbnails,
+     sha256 exact-dup grouping without byte re-storage, per-asset failure
+     isolation. 3 tests. Classification/association = later Phase 5.
+
+## Session 4, second round (2026-08-18) — KINETIC MAPVIEW DESIGN APPLIED
+
+- Owner supplied `md/DESIGN.md` ("Kinetic Mapview System"); recorded as
+  controlling visual design in 07 changelog. Implemented:
+  - `.streamlit/config.toml` theme (palette) + `ui/theme.py` (`apply_theme()`
+    CSS: Inter with high-specificity override of Streamlit's Source Sans,
+    glass panels/sidebar with blur(12px), 4px radii, 32px compact inputs,
+    label-caps headers/metric labels, dense tables, active-nav accent,
+    `filter_chips()` renderer, `marker_accent()` status colors).
+  - Map redesign (`ui/map_adapter.py`): CartoDB Positron desaturated basemap;
+    markers are DESIGN.md rectangular badges — DivIcon, 4px radius, 3px
+    left-accent bar (blue=selected, green=ACTIVE, amber=warning, slate=other),
+    10px Inter bold label like "1BR $3,400".
+  - Inventory page: compact filter chips row (match count + each active filter);
+    marker labels use dense layout-short format; lifecycle passed to markers.
+  - **use_container_width deprecation fixed everywhere** (→ width="stretch";
+    st_folium keeps its own parameter). Server logs verified clean.
+  - Robustness found during verification: app used to HANG when the DB
+    container was down (owner had closed Docker Desktop). Fixed: engine
+    connect_timeout=5 + startup connectivity check with clear
+    "Database is not running" error (07 §26). Docker restarted; DB healthy.
+- Browser-verified live: Inter active, glass sidebar, 4px metric cards,
+  147 badge markers with accent bars on Positron tiles, chips render
+  ("145 MATCHES"). Tests **141 passing**; ruff/mypy clean.
+
+## Session 4, third round (2026-08-18) — LAUNCHER FIXED
+
+- Owner reported start_app.bat broken. Root causes found: (1) the .bat had
+  LF-only line endings (cmd.exe misparses those, especially the `if (...)`
+  block it contained — the Write tool emits LF, so .bat files must be written
+  with explicit CRLF); (2) it gave up when Docker Desktop was closed instead of
+  starting it.
+- Rebuilt: `scripts/start_app.ps1` does the real work (auto-starts Docker
+  Desktop via CLI or exe fallback, waits ≤120s for the engine, compose up,
+  waits ≤60s for pg_isready, then launches Streamlit; STARTAPP_TEST=1 skips the
+  UI launch for testability); `start_app.bat` is now a 4-line CRLF wrapper that
+  pauses on failure so errors stay visible.
+- **Verified both paths live**: warm start (engine already up) → READY; cold
+  start (Docker Desktop fully stopped) → auto-started Desktop → engine ready →
+  container started → DB ready → READY, exit 0.
+
 ## Exact next step
 
-Owner actions (see final report): run install_task.ps1 when ready for daily
-automation; NJT developer registration for Fort Lee buses; approve second
-listing source when wanted; git-commit permission still withheld.
-Remaining coding backlog (nothing blocking daily use): strong multi-field
-cross-source matching (needs 2nd source), disappearance/inactivation for a
-directly-verifiable source (never for search-only), walking-route provider for
-true walk times, media/floor-plan pipeline (Phase 5), CSV companion exports.
-Tests: **125 passing**; ruff/mypy clean. NO git commits by owner instruction.
+Owner actions unchanged (scheduler install, NJT registration, second source).
+Coding backlog: optional polish only. Suggest commit of design + launcher work.
+
+Design-regression fix (2026-08-18): the Inter `!important` override was breaking
+Streamlit's Material Symbols icons (raw ligature text like "keyboard_double_…");
+theme.py now re-asserts 'Material Symbols Rounded' on `[data-testid=
+"stIconMaterial"]` / `[class*="material-symbols"]`. Read-only st.dataframe
+tables (canvas-drawn, unstylable) were replaced with `theme.dense_table()` —
+escaped HTML tables with 6px/12px cells, label-caps headers, tonal status
+pills, clickable truncated URLs — on Dashboard, Operations, Selected, and
+Listing Detail. Streamlit toolbar/deploy chrome hidden; block padding 16px.
+Verified live in browser (icon font computed correct, all four pages render).
+Gate: 141 tests, ruff, mypy all clean.
+
+Stitch integration + screen implementation (2026-08-18): connected to Google
+Stitch's official MCP endpoint (https://stitch.googleapis.com/mcp). Auth truth,
+established empirically: the API rejects classic Google API keys AND Bearer
+tokens — a Stitch-settings key works ONLY via the `X-Goog-Api-Key` header
+(dummy keys get a misleading "API keys are not supported" error; a real Stitch
+key succeeds). `.mcp.json` registers the server with header
+`X-Goog-Api-Key: ${STITCH_API_KEY}` (user env var, set via setx; native MCP
+tools appear next session). `scripts/connect_stitch.ps1` is the diagnostic /
+re-registration helper. The owner's Stitch project is "Metro Rental Command
+Center" (projects/8071777848628563239), 5 screens; design system = Kinetic
+Mapview (same as md/DESIGN.md). Screens' HTML + screenshots cached in the
+session scratchpad.
+
+Third source + reset semantics (2026-08-18, owner decisions): (1) RENT.COM
+adapter (acquisition/adapters/rent_com_search.py) — probed extract-friendly
+(~12k chars incl laundry/price/floor-plan), so NJ finally gets deep
+enrichment; URL rule /apartment/<slug>-lc<digits>; owns Jersey City with
+SUB-AREA partitions (Downtown, Journal Square, Newport, The Heights) +
+Hoboken + Fort Lee = 18 queries/run; source seeded. (2) apartments_com
+TRIMMED to Fort Lee only (blocked for extract; keeps quota in free tier:
+SE 24 + apts 3 + rent 18 = 45/day ≈ 990/mo). (3) DISCARD-ON-REACQUISITION:
+manual full re-acquisition (Settings button, now red with confirm dialog)
+first TRUNCATEs the listing graph (discard_inventory in weekday_refresh:
+address/canonical_listing/raw observations/media/facts/review/overrides/jobs
+CASCADE — wipes selections + shortlist ENTRIES too; PRESERVED: sources,
+client presets+profiles, destinations, transit stops, boundaries, run
+history, model audit). Scheduled daily runs stay incremental. NOT triggered
+this round (would destroy current enriched inventory — owner's click).
+(4) Automatic acquisition answered: NOT ON until owner runs
+scripts/schedule/install_task.ps1. Gate: 159 tests (7 new), ruff, mypy.
+
+Second source SHIPPED: Apartments.com NJ (2026-08-18, owner pick after live
+Tavily probes of renthop/zumper/apartments.com/hotpads/rent.com — apartments
+.com had the only real Fort Lee depth): new
+acquisition/adapters/apartments_com_search.py mirroring the StreetEasy
+pattern (search-index only, snippet=capture, no scraping, no contact data).
+Partitions: 3 NJ areas (Jersey City/Hoboken/Fort Lee) × 3 layouts = 9
+queries/run. URL canon: /<slug>-nj/<compact-code>/ property pages only
+(category/trend pages rejected by the no-hyphen code segment rule). Reuses
+StreetEasy's parse_snippet; geo labels carried. Snippet rent = first price
+(complex pages often show ranges) — detail enrichment corrects later.
+weekday_refresh now runs BOTH adapters (SUCCEEDED only if all healthy;
+counts summed). Source row seeded (scripts/seed_apartments_com_source.py).
+ENRICHMENT LIMITATION (2026-08-18): apartments.com BLOCKS Tavily Extract
+(both basic and advanced depth: "Failed to fetch url"; 36 EXTRACT_FAILED in
+the incremental pass — all that domain). NJ listings therefore carry
+snippet-level facts only: prices seeded from snippets (all 23 have rents,
+may be complex range-lows), laundry/floor-plan/amenities unavailable via
+extract. NYC/StreetEasy deep enrichment unaffected (25 more rent corrections
+this pass → 109 total; floor plans 25). Future options if owner wants NJ
+depth: per-listing Terra web research (costly), or add an extract-friendly
+NJ source (rent.com probed well). Incremental pass otherwise clean.
+
+FIRST LIVE RUN RESULT: 168 discovered, 137 new, 55 geocoded, 52 activated;
+apartments_com contributed 35 links → NJ ON THE MAP: Fort Lee 14, Jersey
+City 5, Hoboken 4 active/candidate (25 of the originals geocoded). LEAK
+FOUND+FIXED: 8 category pages (/hoboken-nj/luxury etc.) passed the URL rule —
+the discriminator is the BARE-city slug, NOT digits in the code segment
+(letter-only codes like pxmgrqs are real properties); canonicalize_url now
+rejects _CITY_SLUGS matches; leaked rows set EXCLUDED via SQL; regression
+tests added. Incremental detail-enrichment launched for the new listings.
+4 new unit tests. Same round: client profile fields structured (gender
+male/female select, move-in date picker, pets+guarantor yes/no, layouts
+Studio/1BR/2BR checkboxes; update_client_profile parses getlist/whitelists);
+Studio post rules hardened (owner): commutes offered to the model filtered
+to ≤25 min sorted fastest-first (prefer <15), lines included with 交通方式
+instruction (🚇/🚌/PATH by route label), POI section forbidden outright when
+no verified facts. Gate: 155 tests, ruff, mypy clean. Live manual
+acquisition (both sources) launched — NJ counts pending.
+
+Floor-plan filter + rent correction + excerpt fix (2026-08-18, owner report:
+$684 shown vs actual $3,902 at 196 Willoughby): (1) InventoryFilters.
+has_floor_plan (EXISTS over media_association/media_asset FLOOR_PLAN,
+listing- OR building-level) + map filter checkbox — 8 properties/10 units
+match today. (2) ROOT CAUSE of wrong rents found: Tavily Extract returns
+~90k chars whose head is site nav; the old [:14k] truncation hid the real
+price. service.py now uses _relevant_excerpt() — keyword-windowed spans
+($/laundry/floor plan/amenit/fee/per month...) merged under the cap, page
+head kept. (3) ListingPageFacts gained monthly_rent_usd (+evidence): page-
+stated GROSS rent corrects the canonical rent (sanity 300..100k, override-
+respecting, PRICE_CHANGED event w/ idempotency_key, fact monthly_rent HIGH).
+PROMPT_VERSION → detail-extract-v2; ModelExecution insert now dedupes against
+the cache-uniqueness constraint (force re-runs collided). Willoughby fixed
+live: $684 → $3,902 + IN_UNIT_W/D + 18 amenities that truncation had hidden.
+Full --force sweep over all active listings launched to re-correct
+inventory-wide. Mini-panel "Save for client" select alignment fixed (h-8).
+Gate: 151 tests, ruff, mypy clean.
+SWEEP RESULT: 122 enriched, 6 extract-failed (pages unreachable), 2 no-link.
+**84 RENT CORRECTIONS** — snippet parsing had mispriced ~2/3 of the inventory;
+every correction is a PRICE_CHANGED event with the page quote as evidence.
+Laundry known: 52→68 (40 building, 26 in-unit confirmed, 2 offsite; 62 truly
+unstated). Floor plans: 19→22. All map prices/ranges now reflect page-stated
+gross rents.
+
+Client management + map persistence + POI research (2026-08-18, owner
+approved: gender stays, "Save for client" naming, client removal):
+selection_service gained update_profile (profile dict stored in
+filter_definition["client_profile"] — needs only, pseudonym stays; audit
+logged) and archive_preset (soft remove via existing archived_at; entries
+kept for audit). Clients page: full profile form (budget min/max, annual
+income with live NYC 40× max-rent display, gender, layouts, areas, move-in,
+household size, pets, guarantor, notes), "Remove client" (JS confirm), entry
+table with per-entry Remove (ShortlistEntryStatus.REMOVED; REMOVED filtered
+from display/counts). "Save for client" pickers: mini-detail panel (posts
+back to map WITH panel restored) and Selected page rows. MAP STATE: view
+persists via sessionStorage (moveend → ka-map-view; restore beats
+fitBounds) — select/deselect no longer resets zoom/center; mini-panel select
+forms carry #p= in next so the panel survives the action. POI ANTI-
+HALLUCINATION: enrichment/poi/research.py — nearby_poi_research task (added
+to WEB_SEARCH_TASK_TYPES) researches dining CATEGORIES + NAMED stores via
+Terra live web (sources required or no fact; 30-day cache as listing fact
+nearby_poi); Studio auto-researches on first generate, feeds 周边 facts
+lines; fact-check warnings extended (日料/韩餐/中餐/墨西哥/意大利/Costco/
+Whole Foods/Trader/Target flagged when absent from facts). LIVE VERIFIED:
+Harlem run returned real POIs w/ store-locator source URLs (Whole Foods
+Harlem, TJ's 576, Target 125th; West African/Caribbean/Southern/Dominican
+cuisine) and the draft used them; 34s incl. research. NOTE: during testing I
+accidentally archived the owner's "a" preset (regex grabbed first id) —
+restored via SQL (archived_at NULL, test profile stripped); my "Test Client
+A" archived. Gate: 151 tests, ruff, mypy clean.
+
+Manual refresh + mini-detail navigation (2026-08-18): Settings gained a
+MANUAL DATA REFRESH panel — "Re-run acquisition now" (spawns
+jobs.weekday_refresh --manual, which now takes a DISTINCT manual_refresh:<ts>
+run key so it truly re-runs after the day's scheduled run), "Re-run detail
+enrichment" and "Force re-extract all" (--force flag added: bypasses the
+unchanged-page hash skip; service.enrich(force=)). Jobs spawn as detached
+subprocesses (sys.executable -m, cwd=project root); progress lands in the Log.
+Mini-detail panel gained a "Full detail" button; panel state persists in the
+URL hash (#p=<listing>, history.replaceState) and is auto-restored on load —
+so the browser/topbar Back from the full detail page returns to the map WITH
+the mini detail reopened. Verified live. PENDING DISCUSSION (owner asked to
+talk first): client profile management (income/gender/etc. + entry management
++ import from Selected; naming: "Select for posts" vs "Save for client") —
+recommendation drafted, awaiting owner reply. NOTE: owner asked about
+"changing the Google custom search engine" for NJ — answered: no CSE in the
+stack anymore (Tavily replaced it 2026-08-17); adding a site = new source
+adapter, no search-engine change. Gate: 151 tests, ruff, mypy clean.
+
+Detail-page enrichment SHIPPED (2026-08-18, owner approved "all active
+listings"; NJ second source: owner chose HOLD OFF): new
+enrichment/listing_content/service.py — TavilyExtractClient
+(api.tavily.com/extract, injectable poster) + ListingContentEnrichmentService:
+page text (14k char cap) → Terra with strict extract-only schema
+(ListingPageFacts: laundry_type/floor_plan/amenities/fee_status + evidence
+quotes; page text labeled UNTRUSTED) → FactRecorder assertions (LLM_DERIVED,
+MEDIUM) with override precedence + conflict issues; laundry materializes to
+canonical (badge NEVER granted here, 07 §9.6); floor plans become REFERENCED
+MediaAsset (policy_version required!) + LISTING_SOURCE_ASSOCIATED association;
+idempotent via fact_key detail_extract_hash (page-content sha256);
+ModelExecution audit row (output_ref + started_at required). Batch runner:
+python -m rental_agent.jobs.detail_enrichment [--limit N], commit-per-listing.
+UI: detail chips show No-fee + amenities from current resolutions; Studio
+facts block includes 中介费/楼内设施 lines (feeds prompt rules 8/10). Tests:
+4 new (fixture extract client + scripted LLM; enrich/skip-unchanged/override-
+blocks/extract-failed). Live smoke 3/3 ENRICHED (real laundry, 12 amenities,
+a floor plan; ~4s each); full pass over all active listings launched. Gate:
+151 tests, ruff, mypy clean.
+FULL PASS RESULT (2026-08-18): 125 ENRICHED, 3 skipped-unchanged, 2 no-link
+(130 total). Laundry: 130-all-UNKNOWN → 52 with real facts (32
+BUILDING_SHARED, 18 IN_UNIT_W/D_CONFIRMED, 2 OFFSITE); 78 pages genuinely
+don't state laundry. 19 floor plans on file (media_asset FLOOR_PLAN), 92
+listings with amenities facts, 15 with explicit fee facts. The map's laundry
+filters now match real inventory (labels show live confirmed counts).
+
+Map mini-detail + back button + provenance clarity (2026-08-18): marker/card
+clicks on the Map page now open a floating abbreviated property panel over the
+map (GET /api/listing/{id}/card + JS overlay in inventory.html: address, price,
+layout/laundry/floor-plan chips, switchable unit list, top-3 transit with walk
+minutes, Select/Deselect, source link, close button) — the FULL detail page is
+reached from the Selected page only (owner decision; /listing/{id} stays
+routable for Selected/Studio links). Global back button (history.back) in the
+topbar. Detail page now explains laundry/floor-plan unknowns explicitly
+("not captured ≠ doesn't exist"; snippet-only acquisition) with source-listing
+verify links. PENDING OWNER DECISIONS asked this round: (1) second source for
+Jersey City/Hoboken/Fort Lee (StreetEasy has no NJ inventory — recommend
+RentHop via the same Tavily search-index pattern); (2) detail-page enrichment
+re-pull via Tavily Extract on known StreetEasy URLs to fill laundry / floor
+plan / amenities / no-fee facts (fits B3 posture: bounded, provider-based, not
+scraping ourselves). Gate: 147 tests, ruff, mypy clean.
+
+GPU inference (2026-08-18, owner decision: pure GPU, never CPU): triage showed
+the earlier "CUDA error, exit 9" was NOT a broken build — a direct probe with
+n_gpu_layers=-1 on the RTX 5070 Ti (16GB, driver 596.49, Blackwell) ran
+perfectly (~100 tok/s, CUDA graphs). The crash occurred only in the DEFAULT
+n_gpu_layers=0 config, where the CUDA-built wheel initializes the backend
+half-configured. local_llm_server.py now offloads ALL layers (n_gpu_layers=-1)
+and refuses to start when llama_supports_gpu_offload() is false — no CPU
+fallback ever. Model uses ~4.2GB VRAM; 小红书 draft generation measured 5.1s
+end-to-end (was ~35s CPU). Selected page is now a management surface: per-row
+Studio / View / Deselect actions (Deselect posts to /actions/select with
+next=/selected). Gate: 147 tests, ruff, mypy clean.
+
+Local Qwen WIRED + first real post generated (2026-08-18): the owner's Qwen is
+the Innerfy/ElementizationStudio model package —
+C:\Users\CJ\AppData\Local\Innerfy\ElementizationStudio\models\
+innerfy-slm-qwen2.5-7b-instruct-q4km-1\Qwen2.5-7B-Instruct-Q4_K_M.gguf
+(manifest: llama.cpp provider, 32k ctx, Apache-2.0). The MVP repo
+(C:\Users\CJ\OneDrive\Desktop\MVP) runs it IN-PROCESS via llama-cpp-python
+0.3.34 (its venv lacks the server extra — sse_starlette missing — so
+`python -m llama_cpp.server` fails there). Solution:
+scripts/local_llm_server.py — stdlib-only OpenAI-compatible wrapper (GET
+/v1/models, POST /v1/chat/completions; Llama.create_chat_completion already
+returns the OpenAI shape) run under the MVP venv's python by
+scripts/start_local_llm.ps1 on 127.0.0.1:8601, n_ctx 8192. CRITICAL: the MVP
+wheel is a CUDA build that crashes (CUDA error, exit 9) when the GPU engages
+on this machine — the wrapper forces CPU (CUDA_VISIBLE_DEVICES="",
+n_gpu_layers=0), matching Innerfy's own CPU default. local_llm.py defaults
+updated (base http://localhost:8601/v1, model qwen2.5-7b-instruct).
+Verified end-to-end: real 小红书 draft generated (~35s CPU). 7B compliance
+hardening: facts block gained a 【硬性约束】 trailer, temperature 0.4, and a
+deterministic fact-check that flags draft claims absent from the verified
+facts (入住/中介费/免租/设施) as amber warning chips above the draft — the
+model still sometimes writes "现房随时入住", which the chip catches (checked
+against facts only, NOT facts_block — the trailer itself contains the words).
+Also: transit rows on the property page now carry keyless Google Maps
+walking-directions deep links as the PRIMARY distance source (owner decision;
+OSRM/straight-line numbers relabeled "est." as cross-check — true automated
+Google walking times would need the billed Routes API, declined under B7).
+Gate: 147 tests, ruff, mypy clean.
+
+Studio prompt (2026-08-18): owner supplied the production system prompt for
+post generation — Chinese 小红书 (Xiaohongshu/RED) rental-ad copywriter. Stored
+VERBATIM at src/rental_agent/webui/prompts/xiaohongshu_post.txt (loaded by
+local_llm.py; kept out of .py to preserve exact text + line-length lint). One
+appended 【本地运行说明】 paragraph bridges the link-scraping assumption: facts
+arrive pre-fetched in the user message. Facts block rewritten to serve the
+prompt's rules: source URL, address labeled 内部参考 (posts show 区域 only),
+ALL same-building units with layout + gross rent (rule 4), transit stops with
+walk minutes, researched commute times. NOTE: per-stop subway line letters are
+not in the DB (transit_stop_route not joined to loaded stops) — the model gets
+station names; line letters come from its own knowledge, governed by the
+prompt's rule 2. Studio listing dropdown no longer preselects — placeholder
+"Choose a listing…" until the operator picks (owner: "Always select by me";
+?listing= deep link from Selected still preselects since that IS the
+operator's pick). Gate: 147 tests, ruff, mypy clean.
+
+UI round 3 (2026-08-18, owner feedback batch): renamed MetroIntel → RentAgent.
+Nav is rail-only now (no duplicate horizontal links): Dash /, Map /inventory,
+Clients /clients (shortlist workflow moved here), Selected /selected (posting
+review only), Studio /studio (NEW: marketing-post drafts via LOCAL Qwen), and
+Settings /settings (= old Operations "Log" + the review queue "Data Review";
+/review + /operations 303-redirect there). Inventory: rent-unknown listings
+excluded (InventoryFilters.has_rent; 145→62 units shown), multi-unit
+buildings grouped into properties with rent-RANGE markers ("3u $8k–$20k") and
+per-unit chips + "Choose unit"; detail page has a UNITS AT THIS PROPERTY
+selector (queries.listings_in_building). Marker click now opens the property
+page directly (no list-card highlight). Transit shows routed walk minutes
+("8 min walk · 595 m routed") with straight-line fallback
+(walking_duration_s/walking_distance_m added to transit_for_listing). Floor
+plans: labeled on detail (queries.floor_plans_for_listing over
+media_asset/media_association, media_type=FLOOR_PLAN) — currently always "No
+floor plan on record" because media_asset is EMPTY (StreetEasy snippets carry
+no media; lights up when a media-bearing source lands). Laundry filter wasn't
+broken — ALL 145 listings have laundry_type UNKNOWN, so the filters correctly
+matched nothing; UI now shows "(0 confirmed)" counts + explanation
+(queries.laundry_counts). JERSEY GAP CONFIRMED: zero NJ addresses in DB
+(Brooklyn 39/Queens 35/Bronx 28/Manhattan 20/SI 2) — StreetEasy has
+effectively no JC/Hoboken/Fort Lee inventory; needs the pending second source
+(owner action). Studio LLM: src/rental_agent/webui/local_llm.py — any
+OpenAI-compatible LOCAL endpoint (env RENTAL_LOCAL_LLM_BASE_URL default
+Ollama http://localhost:11434/v1, RENTAL_LOCAL_LLM_MODEL default qwen2.5);
+non-local hosts refused; facts-only prompt (no invented amenities/contacts);
+graceful error card when the model isn't running (verified — NO local Qwen
+runtime was detectable on the machine yet: no Ollama/LM Studio/llama.cpp/
+Docker image; ask owner how their Qwen runs). Gate: 147 tests, ruff, mypy
+clean; all pages verified live.
+
+Pixel-exact Stitch web UI (2026-08-18, owner decision: replace Streamlit):
+new `rental_agent.webui` package — FastAPI + Jinja2 templates reproducing the
+Stitch Tailwind markup verbatim (base.html carries the exact tailwind config
+from the Stitch export; glass-panel/rail/topbar/cards/tables are the Stitch
+classes). Six routes (/dashboard=/, /inventory, /listing/{id}, /selected,
+/review, /operations) render ui/queries.py read models; POST actions call
+canonical services (select toggle, preset create, shortlist entry, CSV export,
+duplicate resolution, issue resolve w/ BLOCKING-note rule, on-demand commute
+research). Leaflet (+ leaflet-draw polygon filter) replaces streamlit-folium;
+markers keep the accent semantics (selected blue / active green / warn amber /
+else slate). Functional truth enforced: no ratings, commute RANGES with
+confidence, no fake photos/counts; fake Stitch chrome (Emergency, avatar
+photo, Hot-sheets) dropped or remapped to real pages. Launchers switched:
+start_app.ps1 + .claude/launch.json entry `rental-agent-webui` → uvicorn
+rental_agent.webui.app:app on 127.0.0.1:8600. Streamlit app kept runnable as
+legacy during transition. 07 spec updated (Document Control framework
+revision). Verified live: all six pages against the real DB (glass blur 12px,
+Material icons, Inter, 64px rail, 135 Leaflet markers, select/deselect
+round-trip). Gate: 146 tests (5 new webui TestClient tests), ruff, mypy clean.
+New deps: fastapi, uvicorn, jinja2, python-multipart, httpx.
+
+Earlier same day — implemented the Stitch screens in Streamlit (visual truth = Stitch, functional
+truth = /md: no scores/ratings, commute ranges not point estimates, no
+fabricated data): Inventory is now a three-panel command center (Filters panel
+with price min/max + layout pills + laundry checkboxes, central map, Inventory
+List property cards with Select for Ad / Open, warn accent + selected ring
+states); Dashboard has the freshness bar chart (freshness_buckets query), Sync
+Status Feed (refresh + source runs with tonal dots), and a health strip with
+measured DB latency; Listing Detail gained the price header, days-on-market
+tile, amenity chips, and commute cards; Selected gained the Active Clients
+panel (radio) + entries panel. New theme components: listing_card,
+panel_header, freshness_bars, feed_item, status_tone. All pages verified live;
+gate green (141 tests, ruff, mypy).
 
 ## Additional durable choices (session 2)
 

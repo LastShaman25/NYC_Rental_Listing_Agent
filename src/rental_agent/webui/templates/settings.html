@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Settings - RentAgent{% endblock %}
+{% block page_label %}SETTINGS &middot; LOG &middot; DATA REVIEW{% endblock %}
+{% block main %}
+<main class="flex-1 overflow-y-auto p-panel-margin pb-20 flex flex-col gap-panel-margin custom-scrollbar">
+<div>
+<h1 class="font-headline-panel text-[24px] leading-tight font-bold text-on-surface mb-1">Settings</h1>
+<p class="text-on-surface-variant font-body-compact">Pipeline log, source health, and data review.</p>
+</div>
+{% if error %}
+<div class="px-3 py-2 bg-error-container border border-error/30 rounded-DEFAULT font-body-compact text-body-compact text-on-error-container">{{ error }}</div>
+{% endif %}
+{% if started %}
+<div class="px-3 py-2 bg-secondary-container/30 border border-secondary-container/50 rounded-DEFAULT font-body-compact text-body-compact text-on-secondary-container">{{ started }}</div>
+{% endif %}
+<!-- Manual data refresh -->
+<div class="glass-panel rounded-xl p-4">
+<h2 class="font-label-caps text-label-caps text-on-surface-variant border-b border-border-subtle pb-2 mb-3">MANUAL DATA REFRESH</h2>
+<div class="flex flex-wrap gap-3 items-start">
+<form action="/actions/run-acquisition" method="post" onsubmit="return confirm('Full re-acquisition DISCARDS ALL current inventory first (listings, enrichment facts, selections, shortlist entries — client profiles are kept). Continue?')">
+<button class="px-4 py-2 bg-error text-on-error font-display-table text-display-table rounded-DEFAULT hover:bg-error/80 transition-colors flex items-center gap-2" type="submit">
+<span class="material-symbols-outlined text-[16px]">restart_alt</span> Full re-acquisition (discards old data)
+</button>
+<p class="font-body-compact text-[11px] text-on-surface-variant mt-1 max-w-[280px]">Wipes the current inventory, then runs discovery + normalize + geocode + admission from scratch across all three sources. Client profiles, destinations, and transit data are kept. A few minutes; progress in the Log below.</p>
+</form>
+<form action="/actions/run-enrichment" method="post">
+<button class="px-4 py-2 border border-primary text-primary font-display-table text-display-table rounded-DEFAULT hover:bg-primary hover:text-on-primary transition-colors flex items-center gap-2" type="submit">
+<span class="material-symbols-outlined text-[16px]">plagiarism</span> Re-run detail enrichment
+</button>
+<p class="font-body-compact text-[11px] text-on-surface-variant mt-1 max-w-[260px]">Re-reads listing pages for laundry / floor plans / amenities / fees. Unchanged pages are skipped (cheap).</p>
+</form>
+<form action="/actions/run-enrichment" method="post">
+<input name="force" type="hidden" value="1"/>
+<button class="px-4 py-2 border border-status-warning text-status-warning font-display-table text-display-table rounded-DEFAULT hover:bg-status-warning hover:text-on-primary transition-colors flex items-center gap-2" type="submit">
+<span class="material-symbols-outlined text-[16px]">restart_alt</span> Force re-extract all
+</button>
+<p class="font-body-compact text-[11px] text-on-surface-variant mt-1 max-w-[260px]">Ignores the unchanged-page cache &mdash; use when a previous extraction was wrong. Costs one extract + one LLM call per listing.</p>
+</form>
+</div>
+</div>
+<!-- Data review -->
+<div class="glass-panel rounded-xl p-4">
+<h2 class="font-label-caps text-label-caps text-on-surface-variant border-b border-border-subtle pb-2 mb-3">DATA REVIEW &mdash; DUPLICATE CANDIDATES ({{ candidates | length }})</h2>
+{% for c in candidates %}
+<div class="bg-surface-container-lowest border border-border-subtle rounded-lg p-3 mb-2">
+<div class="font-display-table text-[13px] text-on-surface mb-1">Listing A <code class="text-primary">{{ c.listing_a[:8] }}</code> vs Listing B <code class="text-primary">{{ c.listing_b[:8] }}</code></div>
+<pre class="font-body-compact text-[11px] text-on-surface-variant bg-surface-container-low rounded p-2 overflow-x-auto custom-scrollbar mb-2">{{ c.evidence_pretty }}</pre>
+<div class="flex gap-2">
+<form action="/actions/duplicate/{{ c.candidate_id }}" method="post">
+<input name="decision" type="hidden" value="keep_a"/>
+<button class="px-3 py-1.5 border border-primary text-primary rounded-DEFAULT font-display-table text-[12px] hover:bg-primary hover:text-on-primary transition-colors" type="submit">Same apartment &mdash; keep A</button>
+</form>
+<form action="/actions/duplicate/{{ c.candidate_id }}" method="post">
+<input name="decision" type="hidden" value="keep_b"/>
+<button class="px-3 py-1.5 border border-primary text-primary rounded-DEFAULT font-display-table text-[12px] hover:bg-primary hover:text-on-primary transition-colors" type="submit">Same apartment &mdash; keep B</button>
+</form>
+<form action="/actions/duplicate/{{ c.candidate_id }}" method="post">
+<input name="decision" type="hidden" value="different"/>
+<button class="px-3 py-1.5 border border-border-subtle text-on-surface-variant rounded-DEFAULT font-display-table text-[12px] hover:bg-surface-variant transition-colors" type="submit">Different apartments</button>
+</form>
+</div>
+</div>
+{% else %}
+<p class="font-body-compact text-body-compact text-secondary flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">check_circle</span> No pending duplicate candidates.</p>
+{% endfor %}
+<h2 class="font-label-caps text-label-caps text-on-surface-variant border-b border-border-subtle pb-2 mb-3 mt-6">DATA REVIEW &mdash; OPEN ISSUES ({{ issues | length }})</h2>
+{% for issue in issues %}
+<div class="bg-surface-container-lowest border border-border-subtle rounded-lg p-3 mb-2 {% if issue.severity == 'BLOCKING' %}border-l-4 border-l-error{% elif issue.severity == 'HIGH' %}border-l-4 border-l-status-warning{% endif %}">
+<div class="font-display-table text-[13px] text-on-surface mb-1">{{ issue.severity }} &middot; {{ issue.type }} &middot; {{ issue.created }}</div>
+<pre class="font-body-compact text-[11px] text-on-surface-variant bg-surface-container-low rounded p-2 overflow-x-auto custom-scrollbar mb-2">{{ issue.details_pretty }}</pre>
+<form action="/actions/resolve-issue/{{ issue.issue_id }}" class="flex gap-2" method="post">
+<input class="flex-1 h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest focus:border-primary" name="note" placeholder="Resolution note{% if issue.severity == 'BLOCKING' %} (required for BLOCKING){% endif %}" type="text"/>
+<button class="px-3 h-8 bg-primary text-on-primary font-display-table text-[12px] rounded-DEFAULT hover:bg-primary-container" type="submit">Mark resolved</button>
+</form>
+</div>
+{% else %}
+<p class="font-body-compact text-body-compact text-secondary flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">check_circle</span> No open issues.</p>
+{% endfor %}
+</div>
+<!-- Log -->
+{% for section in sections %}
+<div class="glass-panel rounded-xl p-4">
+<h2 class="font-label-caps text-label-caps text-on-surface-variant border-b border-border-subtle pb-2 mb-3">LOG &mdash; {{ section.title }}</h2>
+{% if section.rows %}
+<div class="overflow-x-auto custom-scrollbar">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-border-subtle">
+{% for header in section.headers %}<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">{{ header }}</th>{% endfor %}
+</tr>
+</thead>
+<tbody>
+{% for row in section.rows %}
+<tr class="border-b border-border-subtle hover:bg-surface-container transition-colors">
+{% for header in section.headers %}<td class="py-1.5 text-xs text-on-surface">{{ row.get(header, '') }}</td>{% endfor %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<p class="font-body-compact text-body-compact text-on-surface-variant">{{ section.empty }}</p>
+{% endif %}
+{% if section.note %}<p class="font-body-compact text-[11px] text-on-surface-variant mt-2">{{ section.note }}</p>{% endif %}
+</div>
+{% endfor %}
+</main>
+{% endblock %}

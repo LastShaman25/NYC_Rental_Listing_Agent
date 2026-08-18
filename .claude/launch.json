@@ -2,6 +2,21 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "rental-agent-webui",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": [
+        "run",
+        "--no-sync",
+        "uvicorn",
+        "rental_agent.webui.app:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8600"
+      ],
+      "port": 8600
+    },
+    {
       "name": "rental-agent-ui",
       "runtimeExecutable": "uv",
       "runtimeArgs": [
