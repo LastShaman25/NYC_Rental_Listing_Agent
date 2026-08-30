@@ -23,7 +23,7 @@ from rental_agent.enrichment.listing_content.service import (
     ListingContentEnrichmentService,
     TavilyExtractClient,
 )
-from rental_agent.enrichment.llm.openai_executor import OpenAiLlmExecutor
+from rental_agent.enrichment.llm.openai_executor import executor_from_settings
 
 log = get_logger(__name__)
 
@@ -38,12 +38,13 @@ def run_detail_enrichment(*, limit: int = 0, force: bool = False) -> dict[str, i
     if search_key is None or openai_key is None:
         log.error("detail_enrichment_missing_keys")
         return {"MISSING_KEYS": 1}
+    from rental_agent.acquisition.search_tavily import TavilySearchProvider
+
     extract_client = TavilyExtractClient(search_key.get_secret_value())
-    llm = OpenAiLlmExecutor(
-        settings.providers.llm_default_model_id,
-        settings.providers.llm_default_reasoning_effort,
-        api_key=openai_key.get_secret_value(),
-    )
+    # Enables the official-building-website fallback for aggregator pages
+    # that block extraction (owner decision 2026-08-18).
+    search_provider = TavilySearchProvider(search_key.get_secret_value())
+    llm = executor_from_settings(settings.providers)
     factory = build_session_factory(build_engine(settings))
 
     with factory() as session:
@@ -59,13 +60,24 @@ def run_detail_enrichment(*, limit: int = 0, force: bool = False) -> dict[str, i
         ids = ids[:limit]
     log.info("detail_enrichment_start", listings=len(ids))
 
+    from rental_agent.enrichment.listing_content.service import TavilyQuotaError
+
     counts: dict[str, int] = {}
     for index, listing_id in enumerate(ids, start=1):
         with factory() as session:
-            service = ListingContentEnrichmentService(session, llm, extract_client)
+            service = ListingContentEnrichmentService(
+                session, llm, extract_client, search_provider=search_provider
+            )
             try:
                 outcome = service.enrich(listing_id, force=force)
                 session.commit()
+            except TavilyQuotaError as exc:
+                # Account-level limit: abort the batch instead of burning
+                # through every listing (2026-08-30 incident).
+                session.rollback()
+                log.error("detail_enrichment_rate_limited_abort", error=str(exc))
+                counts["RATE_LIMITED"] = 1
+                break
             except Exception as exc:  # noqa: BLE001 - batch keeps going
                 session.rollback()
                 log.error("detail_enrichment_error", listing=str(listing_id), error=str(exc))

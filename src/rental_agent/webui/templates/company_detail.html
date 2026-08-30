@@ -1,0 +1,371 @@
+{% extends "base.html" %}
+{% block title %}{{ d.name }} - RentAgent{% endblock %}
+{% block page_label %}COMPANY PROPERTY DETAIL{% endblock %}
+{% block main %}
+<main class="flex-1 overflow-y-auto p-panel-margin pb-20 flex gap-panel-margin custom-scrollbar">
+<!-- Left Column: Details & Evidence (mirrors the listing detail page) -->
+<div class="w-7/12 flex flex-col gap-panel-margin">
+<!-- Overview Data Panel -->
+<div class="glass-panel rounded-xl p-4">
+<div class="flex justify-between items-start mb-4 border-b border-border-subtle pb-4">
+<div>
+<h1 class="font-headline-panel text-2xl font-bold text-on-surface tracking-tight"><span class="text-tertiary">★</span> {{ d.name }}{% if d.page_name %} <span class="text-on-surface-variant font-normal">&middot; {{ d.page_name }}</span>{% endif %}</h1>
+<p class="text-on-surface-variant mt-1 flex items-center gap-2">
+<span class="material-symbols-outlined text-sm">location_on</span> {{ d.address_line }}{% if d.locality %}, {{ d.locality }}{% endif %}
+</p>
+<p class="font-label-caps text-label-caps text-tertiary mt-2 flex items-center gap-1">
+<span>★</span> COMPANY PROPERTY &middot; from {{ d.source_document }}
+</p>
+</div>
+<div class="text-right">
+<div class="font-headline-panel text-3xl font-black text-tertiary tracking-tight">{{ d.rent_major }}<span class="text-lg text-on-surface-variant font-normal">{{ d.rent_suffix }}</span></div>
+<div class="flex items-center justify-end gap-2 mt-1">
+<span class="text-status-occupied font-label-caps text-label-caps border border-border-subtle px-2 py-0.5 rounded">{{ d.check_status }}</span>
+{% if d.selected %}<span class="bg-status-shortlisted text-on-primary px-2 py-0.5 rounded font-label-caps text-label-caps">Selected</span>{% endif %}
+</div>
+</div>
+</div>
+<div class="grid grid-cols-4 gap-4 mb-6">
+<div class="bg-surface-container-low p-3 rounded-lg border border-border-subtle text-center">
+<span class="material-symbols-outlined text-on-surface-variant mb-1" style="font-size: 20px;">bed</span>
+<div class="font-display-table text-display-table text-on-surface">{{ d.units | length }} available unit{{ 's' if d.units | length != 1 else '' }}</div>
+</div>
+<div class="bg-surface-container-low p-3 rounded-lg border border-border-subtle text-center">
+<span class="material-symbols-outlined text-on-surface-variant mb-1" style="font-size: 20px;">local_laundry_service</span>
+<div class="font-display-table text-display-table text-on-surface">{{ d.laundry_label }}</div>
+</div>
+<div class="bg-surface-container-low p-3 rounded-lg border border-border-subtle text-center">
+<span class="material-symbols-outlined text-on-surface-variant mb-1" style="font-size: 20px;">calendar_month</span>
+<div class="font-display-table text-display-table text-on-surface">{{ d.days_in_portfolio }} days in portfolio</div>
+</div>
+<div class="bg-surface-container-low p-3 rounded-lg border border-border-subtle text-center">
+<span class="material-symbols-outlined text-on-surface-variant mb-1" style="font-size: 20px;">link</span>
+<div class="font-display-table text-display-table text-on-surface">{{ d.links | length }} source link(s) &middot; {{ d.link_status }}</div>
+</div>
+</div>
+<!-- Available units (mirrors UNITS AT THIS PROPERTY) -->
+<div class="mb-6">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant mb-2">AVAILABLE UNITS ({{ d.units | length }})</h3>
+{% if d.units and d.check_status == 'FAILED' %}
+<div class="px-3 py-2 mb-2 bg-status-warning/10 border border-status-warning/30 rounded text-xs text-status-warning">The most recent re-check failed &mdash; these units are the snapshot from the last successful check{% if d.snapshot_stamp %} ({{ d.snapshot_stamp }}){% endif %}.</div>
+{% endif %}
+{% if d.units %}
+<div class="flex flex-col gap-1">
+{% for unit in d.units %}
+<div class="flex items-center justify-between px-3 py-2 rounded-lg border border-border-subtle bg-surface-container-lowest">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-tertiary text-[16px]">bed</span>
+<span class="font-display-table text-[13px] text-on-surface">{{ unit.label }}{% if unit.unit_label and unit.unit_label != unit.label %} <span class="text-on-surface-variant">&middot; {{ unit.unit_label }}</span>{% endif %}</span>
+{% if unit.when %}<span class="font-label-caps text-label-caps text-on-surface-variant">{{ unit.when }}</span>{% endif %}
+</div>
+<span class="font-display-table text-[13px] text-tertiary font-semibold">{{ unit.rent }}</span>
+</div>
+{% endfor %}
+</div>
+{% elif d.check_status == 'CHECKED' %}
+<div class="px-3 py-2 bg-surface-container border border-border-subtle rounded text-xs text-on-surface-variant">
+<span class="font-semibold text-on-surface">{% if d.no_units_stated %}The page states no current availability info.{% else %}No available units advertised on the page.{% endif %}</span>
+Absence of an advertised unit is never guessed away &mdash; re-check later or verify on the source page.
+{% if d.url %}<a class="text-primary hover:underline" href="{{ d.url }}" rel="noopener" target="_blank">Open the property page &nearr;</a>{% endif %}
+</div>
+{% elif d.check_status == 'FAILED' %}
+<div class="px-3 py-2 bg-error-container/40 border border-error/30 rounded text-xs text-on-error-container">{{ d.check_error or 'Availability check failed.' }} &mdash; fix the link in the company file and re-upload, or re-check from the Company page.</div>
+{% else %}
+<div class="px-3 py-2 bg-surface-container border border-border-subtle rounded text-xs text-on-surface-variant">Not checked yet &mdash; run &ldquo;Check availability now&rdquo; on the <a class="text-primary hover:underline" href="/company">Company page</a>.</div>
+{% endif %}
+</div>
+<!-- Floor plan (mirrors the listing page) -->
+<div class="mb-4">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant mb-2">FLOOR PLAN</h3>
+{% if d.floor_plan_present %}
+<a class="px-2 py-1 bg-secondary-container/30 border border-secondary-container/50 rounded text-xs text-on-secondary-container inline-flex items-center gap-1 hover:border-secondary transition-colors" href="{{ d.floor_plan_url or d.url }}" rel="noopener" target="_blank">
+<span class="material-symbols-outlined text-[14px]">architecture</span>
+Floor plan available &mdash; open (page-stated)
+</a>
+{% else %}
+<div class="px-3 py-2 bg-surface-container border border-border-subtle rounded text-xs text-on-surface-variant">
+<span class="font-semibold text-on-surface">Not captured.</span>
+&ldquo;No floor plan&rdquo; here means <em>not captured on the checked page</em>, not <em>doesn't exist</em>.
+{% if d.url %}<a class="text-primary hover:underline" href="{{ d.url }}" rel="noopener" target="_blank">Check the property page &nearr;</a>{% endif %}
+</div>
+{% endif %}
+</div>
+<!-- Laundry provenance (mirrors the listing page) -->
+{% if d.laundry_unknown %}
+<div class="mb-4">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant mb-2">LAUNDRY</h3>
+<div class="px-3 py-2 bg-surface-container border border-border-subtle rounded text-xs text-on-surface-variant">
+<span class="font-semibold text-on-surface">Not stated on the checked page.</span>
+Unknown is preserved as unknown &mdash; never guessed.
+{% if d.url %}<a class="text-primary hover:underline" href="{{ d.url }}" rel="noopener" target="_blank">Verify on the property page &nearr;</a>{% endif %}
+</div>
+</div>
+{% endif %}
+{% if d.chips %}
+<div class="mb-4">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant mb-2">CONFIRMED FACTS (PAGE-STATED)</h3>
+<div class="flex flex-wrap gap-2">
+{% for chip in d.chips %}
+<span class="px-2 py-1 bg-surface border border-border-subtle rounded text-xs text-on-surface flex items-center gap-1 cursor-default"><span class="material-symbols-outlined text-[14px]">check</span> {{ chip }}</span>
+{% endfor %}
+</div>
+</div>
+{% endif %}
+{% if d.description %}
+<div class="mb-4">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant mb-2">DESCRIPTION (CONTACT-REDACTED)</h3>
+<p class="font-body-compact text-body-compact text-on-surface whitespace-pre-line">{{ d.description }}</p>
+</div>
+{% endif %}
+<!-- Evidence (mirrors DESCRIPTION) -->
+{% if d.evidence %}
+<div>
+<h3 class="font-label-caps text-label-caps text-on-surface-variant mb-2">PAGE EVIDENCE{% if not d.page_confirmed %} <span class="text-status-warning">&middot; PAGE MATCH UNCONFIRMED</span>{% endif %}</h3>
+<p class="font-body-compact text-body-compact text-on-surface whitespace-pre-line italic">&ldquo;{{ d.evidence }}&rdquo;</p>
+</div>
+{% endif %}
+</div>
+<!-- Check History & Evidence (mirrors LISTING HISTORY & EVIDENCE) -->
+<div class="glass-panel rounded-xl p-4 flex flex-col gap-4">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant border-b border-border-subtle pb-2">CHECK HISTORY &amp; EVIDENCE</h3>
+<div class="flex gap-4">
+<div class="flex-1 bg-surface-container-lowest border border-border-subtle rounded-lg p-3 relative overflow-hidden">
+<div class="absolute right-0 top-0 w-1 h-full bg-tertiary"></div>
+<div class="font-label-caps text-label-caps text-on-surface-variant mb-1">DAYS IN PORTFOLIO</div>
+<div class="flex items-end gap-2">
+<span class="font-display-table text-2xl text-on-surface leading-none">{{ d.days_in_portfolio }}</span>
+<span class="text-xs text-on-surface-variant">added {{ d.added }}</span>
+</div>
+</div>
+<div class="flex-1 bg-surface-container-lowest border border-border-subtle rounded-lg p-3 relative overflow-hidden">
+<div class="absolute right-0 top-0 w-1 h-full bg-status-warning"></div>
+<div class="font-label-caps text-label-caps text-on-surface-variant mb-1">LAST CHECKED</div>
+<div class="flex items-end gap-2">
+<span class="font-display-table text-2xl text-on-surface leading-none">{{ d.last_checked }}</span>
+</div>
+</div>
+</div>
+<div class="mt-2 max-h-64 overflow-y-auto custom-scrollbar">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-border-subtle">
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Time</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Event</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal text-right">Details</th>
+</tr>
+</thead>
+<tbody>
+{% for ev in d.history %}
+<tr class="border-b border-border-subtle hover:bg-surface-container transition-colors">
+<td class="py-1 text-xs text-on-surface whitespace-nowrap">{{ ev.time }}</td>
+<td class="py-1 text-xs text-on-surface"><span class="inline-block w-1.5 h-1.5 rounded-full mr-1" style="background: {% if 'FAIL' in ev.event %}#F59E0B{% else %}#943700{% endif %}"></span>{{ ev.event }}</td>
+<td class="py-1 text-xs text-on-surface-variant text-right">{{ ev.details }}</td>
+</tr>
+{% else %}
+<tr><td class="py-2 text-xs text-on-surface-variant" colspan="3">No checks recorded yet &mdash; history starts with the next availability check.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% if d.evidence_facts %}
+<details class="mt-2">
+<summary class="font-label-caps text-label-caps text-on-surface-variant cursor-pointer">FACT EVIDENCE ({{ d.evidence_facts | length }})</summary>
+<div class="mt-2 flex flex-col gap-2">
+{% for key, quote in d.evidence_facts.items() %}
+<div class="bg-surface-container-lowest border border-border-subtle rounded-lg p-2">
+<div class="font-display-table text-[12px] text-on-surface mb-1">{{ key }}</div>
+<div class="font-body-compact text-[11px] text-on-surface-variant italic">&ldquo;{{ quote }}&rdquo; &middot; page-stated (LLM extract) &middot; {{ d.last_checked }}</div>
+</div>
+{% endfor %}
+</div>
+</details>
+{% endif %}
+</div>
+<!-- Acquired-inventory units at the matched building -->
+{% if d.inventory_units %}
+<div class="glass-panel rounded-xl p-4">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant border-b border-border-subtle pb-2 mb-3">ALSO IN ACQUIRED INVENTORY ({{ d.inventory_units | length }})</h3>
+<div class="flex flex-col gap-1">
+{% for unit in d.inventory_units %}
+<a class="flex items-center justify-between px-3 py-2 rounded-lg border border-border-subtle bg-surface-container-lowest hover:border-primary transition-colors" href="/listing/{{ unit.listing_id }}">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-on-surface-variant text-[16px]">open_in_new</span>
+<span class="font-display-table text-[13px] text-on-surface">{{ unit.layout }}</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">{{ unit.lifecycle }}</span>
+</div>
+<span class="font-display-table text-[13px] text-primary font-semibold">{{ unit.rent }}</span>
+</a>
+{% endfor %}
+</div>
+<p class="font-body-compact text-[11px] text-on-surface-variant mt-2">These acquired listings sit in the same building &mdash; full facts, history, and commute research live on their listing pages.</p>
+</div>
+{% endif %}
+<!-- Sources -->
+<div class="glass-panel rounded-xl p-4">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant border-b border-border-subtle pb-2 mb-3">SOURCE LINKS</h3>
+{% if d.links %}
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-border-subtle">
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Source</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">URL</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Status</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal text-right">Last checked</th>
+</tr>
+</thead>
+<tbody>
+{% for link in d.links %}
+<tr class="border-b border-border-subtle hover:bg-surface-container transition-colors">
+<td class="py-1 text-xs text-on-surface">{{ link.source }}</td>
+<td class="py-1 text-xs"><a class="text-primary hover:underline" href="{{ link.url }}" rel="noopener" target="_blank">{{ link.url | truncate(55) }}</a></td>
+<td class="py-1 text-xs text-on-surface">{{ link.status }}</td>
+<td class="py-1 text-xs text-on-surface-variant text-right">{{ link.last_seen }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="font-body-compact text-body-compact text-on-surface-variant">The company file gave no link for this property &mdash; the agent will search for one on the next availability check.</p>
+{% endif %}
+</div>
+<!-- Actions Panel (mirrors the listing page) -->
+<div class="bg-surface-container-high border border-border-subtle rounded-xl p-4 shadow-sm flex items-center justify-between gap-3 mt-auto flex-wrap">
+<div class="font-body-compact text-body-compact text-on-surface-variant">
+Marketing selection is manual-only (07): no automation ever selects a property.
+</div>
+<div class="flex items-center gap-2 flex-wrap">
+{% if client_presets %}
+<form action="/actions/shortlist" class="flex items-center gap-2" method="post">
+<input name="company_id" type="hidden" value="{{ d.company_id }}"/>
+<input name="next" type="hidden" value="/company/{{ d.company_id }}"/>
+<select class="h-9 px-2 border border-border-subtle rounded-DEFAULT font-body-compact text-[12px] bg-surface-container-lowest" name="preset_id" required>
+<option disabled selected value="">Save for client…</option>
+{% for preset in client_presets %}<option value="{{ preset.id }}">{{ preset.label }}</option>{% endfor %}
+</select>
+<button class="h-9 px-3 border border-tertiary text-tertiary rounded-lg font-display-table text-display-table hover:bg-tertiary hover:text-on-tertiary transition-colors" type="submit">Save</button>
+</form>
+{% endif %}
+<form action="/actions/company-select/{{ d.company_id }}" method="post">
+<input name="next" type="hidden" value="/company/{{ d.company_id }}"/>
+{% if d.selected %}
+<button class="px-6 py-2 border border-status-shortlisted text-status-shortlisted rounded-lg font-display-table text-display-table hover:bg-status-shortlisted hover:text-on-primary transition-colors flex items-center gap-2" type="submit">
+<span class="material-symbols-outlined text-[18px]">bookmark_remove</span> Deselect
+</button>
+{% else %}
+<button class="px-6 py-2 bg-tertiary text-on-tertiary rounded-lg font-display-table text-display-table shadow-sm hover:opacity-85 transition-opacity flex items-center gap-2" type="submit">
+<span class="material-symbols-outlined text-[18px]">ad_units</span> Select for Ad
+</button>
+{% endif %}
+</form>
+</div>
+</div>
+</div>
+<!-- Right Column: Map & Transit (mirrors the listing page) -->
+<div class="w-5/12 flex flex-col gap-panel-margin">
+<div class="h-72 glass-panel rounded-xl overflow-hidden flex flex-col relative shrink-0">
+<div class="absolute top-2 left-2 z-20 pointer-events-none">
+<div class="bg-surface/90 backdrop-blur border border-border-subtle rounded px-2 py-1 font-label-caps text-label-caps flex items-center gap-1 shadow-sm">
+<span class="w-2 h-2 rounded-full {% if d.lat %}bg-tertiary animate-pulse{% else %}bg-status-occupied{% endif %}"></span>
+{% if d.lat %}Geocoded location{% else %}No validated coordinates{% endif %}
+</div>
+</div>
+<div class="flex-1 relative bg-surface-dim" id="detail-map"></div>
+</div>
+<!-- Transit -->
+<div class="glass-panel rounded-xl p-4 flex flex-col">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant flex items-center gap-1 border-b border-border-subtle pb-2 mb-3">
+<span class="material-symbols-outlined text-[16px]">tram</span> NEARBY TRANSIT
+</h3>
+<div class="flex flex-col gap-1 max-h-52 overflow-y-auto custom-scrollbar">
+{% for t in d.transit %}
+<div class="flex items-center justify-between py-1 border-b border-border-subtle last:border-0">
+<div class="font-body-compact text-[12px] text-on-surface">
+{{ t.stop }} <span class="text-on-surface-variant">({{ t.mode }})</span>
+{% if t.gmaps_url %}
+<a class="text-primary hover:underline text-[11px] ml-1" href="{{ t.gmaps_url }}" rel="noopener" target="_blank" title="Walking directions on Google Maps (primary source — cross-check the estimate)">Google Maps &nearr;</a>
+{% endif %}
+</div>
+<div class="text-right">
+{% if t.walk_min %}
+<div class="font-display-table text-[12px] text-on-surface">{{ t.walk_min }} min walk</div>
+<div class="font-body-compact text-[10px] text-on-surface-variant">{{ t.walking_m }} m routed est.</div>
+{% else %}
+<div class="font-display-table text-[12px] text-on-surface">{{ t.straight_line_m }} m</div>
+<div class="font-body-compact text-[10px] text-on-surface-variant">straight-line &mdash; routed walk pending</div>
+{% endif %}
+</div>
+</div>
+{% else %}
+<div class="font-body-compact text-[12px] text-on-surface-variant">No transit within 2&nbsp;km {% if not d.lat %}&mdash; this property has no validated coordinates yet{% endif %}.</div>
+{% endfor %}
+</div>
+</div>
+<!-- Commute Analysis (researched during availability checks; on-demand here) -->
+<div class="glass-panel rounded-xl p-4 flex flex-col">
+<div class="flex justify-between items-center mb-4 border-b border-border-subtle pb-2">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">commute</span> COMMUTE ANALYSIS
+</h3>
+<span class="font-label-caps text-[9px] text-outline">RESEARCHED ESTIMATES &middot; 14-DAY CACHE</span>
+</div>
+<div class="flex-1 flex flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar">
+{% for c in d.commutes %}
+<div class="bg-surface-container-lowest border border-border-subtle rounded-lg p-2.5 hover:border-tertiary transition-colors">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-surface-container flex items-center justify-center text-on-surface-variant">
+<span class="material-symbols-outlined text-[18px]">{{ c.icon }}</span>
+</div>
+<div>
+<div class="font-display-table text-sm text-on-surface">{{ c.destination }}</div>
+<div class="font-body-compact text-[11px] text-on-surface-variant mt-0.5">{{ c.routes }}</div>
+</div>
+</div>
+<div class="text-right">
+<div class="font-headline-panel text-lg font-bold text-on-surface">{{ c.range }}</div>
+<div class="text-[10px] {{ c.conf_class }} flex items-center justify-end gap-0.5 mt-0.5">
+<span class="material-symbols-outlined text-[10px]">{{ c.conf_icon }}</span> {{ c.confidence }} conf. &middot; {{ c.validation }}
+</div>
+</div>
+</div>
+{% if c.summary %}<div class="font-body-compact text-[11px] text-on-surface-variant mt-2">{{ c.summary }}</div>{% endif %}
+{% if c.sources %}
+<details class="mt-1">
+<summary class="font-label-caps text-[9px] text-outline cursor-pointer">SOURCES</summary>
+{% for s in c.sources %}
+<a class="block font-body-compact text-[11px] text-primary hover:underline" href="{{ s.url }}" rel="noopener" target="_blank">{{ s.title }}</a>
+{% endfor %}
+</details>
+{% endif %}
+</div>
+{% else %}
+<div class="font-body-compact text-[12px] text-on-surface-variant">No commute research yet &mdash; the availability check researches the two nearest destinations automatically for properties with available units, or research a destination below.</div>
+{% endfor %}
+</div>
+<form action="/actions/company-commute/{{ d.company_id }}" class="mt-3 pt-3 border-t border-border-subtle flex gap-2" method="post">
+<select class="flex-1 h-8 px-2 border border-border-subtle rounded-DEFAULT text-body-compact bg-surface-container-lowest focus:border-tertiary" name="destination_id">
+{% for dest in d.destinations %}<option value="{{ dest.id }}">{{ dest.name }}</option>{% endfor %}
+</select>
+<button class="px-3 h-8 bg-tertiary text-on-tertiary font-display-table text-[12px] rounded-DEFAULT hover:opacity-85 transition-opacity" onclick="this.innerText='Researching (30-90s)...'" type="submit">Research</button>
+</form>
+</div>
+</div>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+    const loc = {{ location_json | safe }};
+    const map = L.map('detail-map', { attributionControl: false });
+    // Esri Light Gray Canvas: keyless, desaturated, no building footprints.
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 16 }).addTo(map);
+    if (loc) {
+        const icon = L.divIcon({ className: '', html:
+            `<div class="ka-marker company"><span class="accent" style="background:#943700"></span><span class="label">${loc.label}</span></div>`,
+            iconSize: null });
+        L.marker([loc.lat, loc.lon], { icon }).addTo(map);
+        map.setView([loc.lat, loc.lon], 16);
+    } else {
+        map.setView([40.73, -73.99], 11);
+    }
+</script>
+{% endblock %}

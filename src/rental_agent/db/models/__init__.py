@@ -11,6 +11,7 @@ from rental_agent.db.models.canonical import (
     ListingSourceLink,
     Unit,
 )
+from rental_agent.db.models.company import CompanyProperty
 from rental_agent.db.models.facts import (
     AmenityAssertion,
     AmenityDefinition,
@@ -70,6 +71,7 @@ __all__ = [
     "DuplicateCandidate",
     "ListingSourceLink",
     "Unit",
+    "CompanyProperty",
     "AmenityAssertion",
     "AmenityDefinition",
     "FactAssertion",

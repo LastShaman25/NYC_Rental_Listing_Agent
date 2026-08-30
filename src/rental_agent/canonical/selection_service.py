@@ -47,23 +47,36 @@ class MarketingSelectionService:
     def set_selection(
         self,
         *,
-        canonical_listing_id: uuid.UUID,
+        canonical_listing_id: uuid.UUID | None = None,
+        company_property_id: uuid.UUID | None = None,
         status: e.SelectionStatus,
         actor: str,
         actor_type: e.ActorType,
         note: str | None = None,
     ) -> MarketingSelection:
+        """Targets exactly one of a canonical listing or a company portfolio
+        property (owner request 2026-08-30 — company properties are selected
+        for ads through the same workflow)."""
         _require_human(actor_type)
-        now = _now()
-        current = self._s.execute(
-            select(MarketingSelection).where(
-                MarketingSelection.canonical_listing_id == canonical_listing_id
+        if (canonical_listing_id is None) == (company_property_id is None):
+            raise ValueError(
+                "set_selection targets exactly one of "
+                "canonical_listing_id / company_property_id"
             )
+        now = _now()
+        target_filter = (
+            MarketingSelection.canonical_listing_id == canonical_listing_id
+            if canonical_listing_id is not None
+            else MarketingSelection.company_property_id == company_property_id
+        )
+        current = self._s.execute(
+            select(MarketingSelection).where(target_filter)
         ).scalar_one_or_none()
         before = None if current is None else {"selection_status": current.selection_status}
         if current is None:
             current = MarketingSelection(
                 canonical_listing_id=canonical_listing_id,
+                company_property_id=company_property_id,
                 selection_status=status.value,
                 selected_by=actor,
                 selected_at=now,
@@ -81,8 +94,14 @@ class MarketingSelectionService:
                 actor=actor,
                 actor_type=actor_type.value,
                 action_type="marketing_selection_change",
-                target_type="canonical_listing",
-                target_id=canonical_listing_id,
+                target_type=(
+                    "canonical_listing"
+                    if canonical_listing_id is not None
+                    else "company_property"
+                ),
+                target_id=canonical_listing_id
+                if canonical_listing_id is not None
+                else company_property_id,
                 before_values=before,
                 after_values={"selection_status": status.value},
                 reason=note,
@@ -133,20 +152,34 @@ class ClientShortlistService:
         self,
         *,
         client_search_preset_id: uuid.UUID,
-        canonical_listing_id: uuid.UUID,
+        canonical_listing_id: uuid.UUID | None = None,
+        company_property_id: uuid.UUID | None = None,
         status: e.ShortlistEntryStatus,
         actor: str,
         actor_type: e.ActorType,
         note: str | None = None,
     ) -> ClientShortlistEntry:
         """Explicit manual inclusion/exclusion only. This is the sole write path
-        for shortlist membership; no query/filter code path calls it."""
+        for shortlist membership; no query/filter code path calls it.
+
+        Targets exactly one of a canonical listing or a company portfolio
+        property (owner request 2026-08-29 — company properties are managed
+        through the same client workflow)."""
         _require_human(actor_type)
+        if (canonical_listing_id is None) == (company_property_id is None):
+            raise ValueError(
+                "set_entry targets exactly one of canonical_listing_id / company_property_id"
+            )
         now = _now()
+        target_filter = (
+            ClientShortlistEntry.canonical_listing_id == canonical_listing_id
+            if canonical_listing_id is not None
+            else ClientShortlistEntry.company_property_id == company_property_id
+        )
         entry = self._s.execute(
             select(ClientShortlistEntry).where(
                 ClientShortlistEntry.client_search_preset_id == client_search_preset_id,
-                ClientShortlistEntry.canonical_listing_id == canonical_listing_id,
+                target_filter,
             )
         ).scalar_one_or_none()
         before = None if entry is None else {"entry_status": entry.entry_status}
@@ -154,6 +187,7 @@ class ClientShortlistService:
             entry = ClientShortlistEntry(
                 client_search_preset_id=client_search_preset_id,
                 canonical_listing_id=canonical_listing_id,
+                company_property_id=company_property_id,
                 entry_status=status.value,
                 added_by=actor,
                 added_at=now,
@@ -170,7 +204,9 @@ class ClientShortlistService:
                 actor_type=actor_type.value,
                 action_type="client_shortlist_change",
                 target_type="client_shortlist_entry",
-                target_id=canonical_listing_id,
+                target_id=canonical_listing_id
+                if canonical_listing_id is not None
+                else company_property_id,
                 before_values=before,
                 after_values={"entry_status": status.value},
                 reason=note,
@@ -210,6 +246,33 @@ class ClientShortlistService:
                 target_id=client_search_preset_id,
                 before_values={"client_profile": before.get("client_profile")},
                 after_values={"client_profile": profile},
+            )
+        )
+        self._s.flush()
+        return preset
+
+    def restore_preset(
+        self,
+        *,
+        client_search_preset_id: uuid.UUID,
+        actor: str,
+        actor_type: e.ActorType,
+    ) -> ClientSearchPreset:
+        """Un-archive a soft-removed client (labels are unique, so re-adding a
+        removed pseudonym restores it — entries and profile come back)."""
+        _require_human(actor_type)
+        preset = self._s.get(ClientSearchPreset, client_search_preset_id)
+        if preset is None:
+            raise ValueError("client preset not found")
+        preset.archived_at = None
+        self._s.add(
+            AuditActionLog(
+                actor=actor,
+                actor_type=actor_type.value,
+                action_type="client_preset_restored",
+                target_type="client_search_preset",
+                target_id=client_search_preset_id,
+                after_values={"label": preset.label},
             )
         )
         self._s.flush()

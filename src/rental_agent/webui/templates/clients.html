@@ -2,7 +2,14 @@
 {% block title %}Clients - RentAgent{% endblock %}
 {% block page_label %}CLIENT SHORTLISTS{% endblock %}
 {% block main %}
-<main class="flex-1 overflow-y-auto p-panel-margin pb-20 flex gap-panel-margin custom-scrollbar">
+<main class="flex-1 overflow-y-auto p-panel-margin pb-20 flex flex-col gap-panel-margin custom-scrollbar">
+{% if error %}
+<div class="px-3 py-2 bg-error-container border border-error/30 rounded-DEFAULT font-body-compact text-body-compact text-on-error-container">{{ error }}</div>
+{% endif %}
+{% if started %}
+<div class="px-3 py-2 bg-secondary-container/30 border border-secondary-container/50 rounded-DEFAULT font-body-compact text-body-compact text-on-secondary-container">{{ started }}</div>
+{% endif %}
+<div class="flex gap-panel-margin flex-1 min-h-0">
 <!-- Left panel: Active Clients -->
 <div class="w-[300px] shrink-0 flex flex-col gap-panel-margin">
 <div class="glass-panel rounded-xl p-0 flex flex-col overflow-hidden">
@@ -145,15 +152,25 @@
 <tbody>
 {% for entry in chosen_entries %}
 <tr class="border-b border-border-subtle hover:bg-surface-container transition-colors">
-<td class="py-1.5 text-xs"><a class="text-on-surface hover:text-primary font-semibold" href="/listing/{{ entry.listing_id }}">{{ entry.address }}</a></td>
-<td class="py-1.5 text-xs text-on-surface">{{ entry.layout }}</td>
+<td class="py-1.5 text-xs">
+{% if entry.company_id %}
+<span class="text-tertiary">★</span> <a class="text-on-surface hover:text-tertiary font-semibold" href="/company/{{ entry.company_id }}">{{ entry.address }}</a>
+{% else %}
+<a class="text-on-surface hover:text-primary font-semibold" href="/listing/{{ entry.listing_id }}">{{ entry.address }}</a>
+{% endif %}
+</td>
+<td class="py-1.5 text-xs {% if entry.company_id %}text-tertiary font-semibold{% else %}text-on-surface{% endif %}">{{ entry.layout }}</td>
 <td class="py-1.5 text-xs text-on-surface font-semibold">{{ entry.rent }}</td>
 <td class="py-1.5 text-xs text-on-surface">{{ entry.lifecycle }}</td>
 <td class="py-1.5 text-xs text-on-surface-variant">{{ entry.note }}</td>
 <td class="py-1.5 text-xs text-right">
 <form action="/actions/remove-entry" class="inline" method="post">
 <input name="preset_id" type="hidden" value="{{ chosen_id }}"/>
+{% if entry.company_id %}
+<input name="company_id" type="hidden" value="{{ entry.company_id }}"/>
+{% else %}
 <input name="listing_id" type="hidden" value="{{ entry.listing_id }}"/>
+{% endif %}
 <button class="inline-flex items-center gap-1 text-error hover:underline font-semibold" type="submit">
 <span class="material-symbols-outlined text-[13px]">delete</span>Remove
 </button>
@@ -168,6 +185,7 @@
 {% else %}
 <p class="font-body-compact text-body-compact text-on-surface-variant">Create a client preset to start a shortlist.</p>
 {% endif %}
+</div>
 </div>
 </div>
 </main>

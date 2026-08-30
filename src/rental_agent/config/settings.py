@@ -98,6 +98,10 @@ class ProviderSettings(BaseSettings):
     llm_flagship_model_id: str = "gpt-5.6-sol"
     llm_flagship_reasoning_effort: str = "medium"
     openai_api_key: SecretStr | None = None
+    # Owner-configurable LLM endpoint (Settings page): empty = OpenAI's own API.
+    # Any OpenAI-compatible base URL works (the executor falls back to the
+    # chat-completions API there); web-research tasks need the real OpenAI API.
+    llm_base_url: str | None = None
 
     # B3 (owner, 2026-08-17): StreetEasy discovery runs through a configurable
     # search provider behind the SearchProvider adapter. Owner choice: Tavily

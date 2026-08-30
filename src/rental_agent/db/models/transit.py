@@ -214,12 +214,22 @@ class CommuteResult(Base):
             "duration_min_s IS NULL OR duration_max_s IS NULL OR duration_min_s <= duration_max_s",
             name="duration_range_ordered",
         ),
+        # A commute targets EITHER a canonical listing OR a company portfolio
+        # property (owner request 2026-08-30) — exactly one.
+        CheckConstraint(
+            "num_nonnulls(canonical_listing_id, company_property_id) = 1",
+            name="exactly_one_target",
+        ),
         {"schema": "app"},
     )
 
     commute_result_id: Mapped[uuid.UUID] = uuid_pk()
-    canonical_listing_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app.canonical_listing.canonical_listing_id"), nullable=False
+    canonical_listing_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.canonical_listing.canonical_listing_id")
+    )
+    company_property_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("app.company_property.company_property_id", ondelete="CASCADE"),
     )
     destination_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.destination.destination_id"), nullable=False

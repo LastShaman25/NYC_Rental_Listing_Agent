@@ -24,7 +24,7 @@ def _adapter_with(items: list[SearchResultItem]) -> StreetEasySearchAdapter:
 def test_partitions_are_bounded_geography_by_layout():
     adapter = StreetEasySearchAdapter(FakeSearchProvider())
     partitions = adapter.plan_partitions({})
-    assert len(partitions) == 8 * 3  # (boroughs + neighborhoods) x layouts
+    assert len(partitions) == 9 * 3  # (boroughs + neighborhoods incl. Inwood) x layouts
     for p in partitions:
         assert p.query_parameters["query"].startswith("site:streeteasy.com ")
 

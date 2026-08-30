@@ -83,9 +83,9 @@ def _run(factory, adapter, key="run:1") -> object:
 def test_full_slice_discovery_to_canonical(factory, registered_streeteasy):
     summary = _run(factory, _fixture_adapter())
     assert summary.status is e.SourceRunStatus.HEALTHY
-    assert summary.persisted_new == 2  # two unique listings across 24 partitions
+    assert summary.persisted_new == 2  # two unique listings across all partitions
     assert summary.duplicates_skipped > 0  # same items returned per partition
-    assert summary.partitions_completed == 24
+    assert summary.partitions_completed == 27  # 9 geo partitions x 3 layouts
 
     drained = drain_normalize_jobs(factory, discovery_method=e.DiscoveryMethod.SEARCH_INDEX)
     assert drained == 2
@@ -157,5 +157,5 @@ def test_checkpoints_recorded_per_partition(factory, registered_streeteasy):
             .scalars()
             .all()
         )
-        assert len(checkpoints) == 24
+        assert len(checkpoints) == 27
         assert all(cp.completed for cp in checkpoints)

@@ -84,14 +84,22 @@ class CommuteResearchService:
         self._cache_days = cache_days
 
     def get_fresh_result(
-        self, canonical_listing_id: uuid.UUID, destination_id: uuid.UUID
+        self,
+        canonical_listing_id: uuid.UUID | None,
+        destination_id: uuid.UUID,
+        company_property_id: uuid.UUID | None = None,
     ) -> CommuteResult | None:
         """Return an unexpired researched estimate if one exists (14-day cache)."""
         now = datetime.now(tz=UTC)
+        target_filter = (
+            CommuteResult.canonical_listing_id == canonical_listing_id
+            if canonical_listing_id is not None
+            else CommuteResult.company_property_id == company_property_id
+        )
         return self._s.execute(
             select(CommuteResult)
             .where(
-                CommuteResult.canonical_listing_id == canonical_listing_id,
+                target_filter,
                 CommuteResult.destination_id == destination_id,
                 CommuteResult.result_type == e.CommuteResultType.RESEARCHED_ESTIMATE.value,
                 CommuteResult.expires_at > now,
@@ -103,23 +111,38 @@ class CommuteResearchService:
     def research(
         self,
         *,
-        canonical_listing_id: uuid.UUID,
+        canonical_listing_id: uuid.UUID | None = None,
+        company_property_id: uuid.UUID | None = None,
         destination_id: uuid.UUID,
         origin_description: str,
         input_location_hash: str,
     ) -> CommuteResult:
         """Run one on-demand research task and persist the estimate.
 
-        The LLM call itself happens outside any open write transaction; this
-        method only persists results (06 §13.3 — caller controls commit).
+        Targets exactly one of a canonical listing or a company portfolio
+        property (owner request 2026-08-30 — company checks research
+        commutes too). The LLM call itself happens outside any open write
+        transaction; this method only persists results (06 §13.3 — caller
+        controls commit).
         """
-        cached = self.get_fresh_result(canonical_listing_id, destination_id)
+        if (canonical_listing_id is None) == (company_property_id is None):
+            raise ValueError(
+                "research targets exactly one of "
+                "canonical_listing_id / company_property_id"
+            )
+        cached = self.get_fresh_result(
+            canonical_listing_id, destination_id, company_property_id
+        )
         if cached is not None:
             return cached
 
         destination = self._s.get(Destination, destination_id)
         if destination is None:
             raise LookupError(f"destination {destination_id} not found")
+        target_id = canonical_listing_id if canonical_listing_id is not None else (
+            company_property_id
+        )
+        target_key = "listing" if canonical_listing_id is not None else "company_property"
 
         now = datetime.now(tz=UTC)
         input_payload = {
@@ -136,7 +159,7 @@ class CommuteResearchService:
         input_hash = hashlib.sha256(
             repr(
                 (
-                    canonical_listing_id,
+                    target_id,
                     destination.destination_code,
                     input_location_hash,
                     destination.registry_version,
@@ -151,7 +174,7 @@ class CommuteResearchService:
                 prompt_version=PROMPT_VERSION,
                 output_schema_version=OUTPUT_SCHEMA_VERSION,
                 input_refs={
-                    "listing": str(canonical_listing_id),
+                    target_key: str(target_id),
                     "destination": destination.destination_code,
                 },
                 input_payload=input_payload,
@@ -182,7 +205,7 @@ class CommuteResearchService:
             output_schema_version=OUTPUT_SCHEMA_VERSION,
             input_hash=input_hash,
             input_refs={
-                "listing": str(canonical_listing_id),
+                target_key: str(target_id),
                 "destination": destination.destination_code,
             },
             output_ref=output.model_dump(mode="json"),
@@ -201,6 +224,7 @@ class CommuteResearchService:
 
         commute = CommuteResult(
             canonical_listing_id=canonical_listing_id,
+            company_property_id=company_property_id,
             destination_id=destination_id,
             result_type=e.CommuteResultType.RESEARCHED_ESTIMATE.value,
             model_execution_id=execution.model_execution_id,

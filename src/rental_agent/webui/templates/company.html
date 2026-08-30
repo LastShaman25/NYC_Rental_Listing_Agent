@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Company Portfolio - RentAgent{% endblock %}
+{% block page_label %}COMPANY PORTFOLIO{% endblock %}
+{% block main %}
+<main class="flex-1 overflow-y-auto p-panel-margin pb-20 flex flex-col gap-panel-margin custom-scrollbar">
+<div class="flex items-start justify-between gap-4 flex-wrap">
+<div class="min-w-0">
+<h1 class="font-headline-panel text-[24px] leading-tight font-bold text-on-surface mb-1">Company Portfolio</h1>
+<p class="text-on-surface-variant font-body-compact">Upload the company property file (.docx / .pdf); the agent records every listed property, checks its page for available units, and repairs dead links via the building&rsquo;s official website or StreetEasy. Company properties are highlighted on the map.</p>
+</div>
+<!-- The one live condition indicator: idle / parsing / checking N of M / done / failed -->
+<div class="flex items-center gap-2 px-3 py-1.5 rounded-full border border-border-subtle bg-surface-container-lowest shadow-sm shrink-0" id="check-indicator" title="Live status of the company availability check">
+<span class="w-2 h-2 rounded-full bg-outline-variant" id="check-dot"></span>
+<span class="font-display-table text-[12px] text-on-surface" id="check-text">CHECKING STATUS…</span>
+</div>
+</div>
+{% if error %}
+<div class="px-3 py-2 bg-error-container border border-error/30 rounded-DEFAULT font-body-compact text-body-compact text-on-error-container">{{ error }}</div>
+{% endif %}
+{% if started %}
+<div class="px-3 py-2 bg-secondary-container/30 border border-secondary-container/50 rounded-DEFAULT font-body-compact text-body-compact text-on-secondary-container">{{ started }}</div>
+{% endif %}
+<!-- Upload + actions -->
+<div class="glass-panel rounded-xl p-4">
+<h2 class="font-label-caps text-label-caps text-on-surface-variant border-b border-border-subtle pb-2 mb-3">COMPANY FILE</h2>
+<div class="flex flex-wrap gap-4 items-start">
+<form action="/actions/company-upload" enctype="multipart/form-data" method="post" class="flex items-center gap-2">
+<input accept=".docx,.pdf" class="font-body-compact text-body-compact text-on-surface file:mr-2 file:px-3 file:py-1.5 file:border file:border-border-subtle file:rounded-DEFAULT file:bg-surface-container-lowest file:text-on-surface file:font-display-table file:text-[12px] file:cursor-pointer" name="file" required type="file"/>
+<button class="px-4 py-2 bg-primary text-on-primary font-display-table text-display-table rounded-DEFAULT hover:bg-primary-container transition-colors flex items-center gap-2" type="submit">
+<span class="material-symbols-outlined text-[16px]">upload_file</span> Upload &amp; parse
+</button>
+</form>
+<form action="/actions/company-check" method="post">
+<button class="px-4 py-2 border border-primary text-primary font-display-table text-display-table rounded-DEFAULT hover:bg-primary hover:text-on-primary transition-colors flex items-center gap-2" type="submit">
+<span class="material-symbols-outlined text-[16px]">travel_explore</span> Check availability now
+</button>
+<p class="font-body-compact text-[11px] text-on-surface-variant mt-1 max-w-[260px]">Reads each property&rsquo;s page for available units; skips properties checked in the last day.</p>
+</form>
+<form action="/actions/company-check" method="post">
+<input name="failed_only" type="hidden" value="1"/>
+<button class="px-4 py-2 border border-error text-error font-display-table text-display-table rounded-DEFAULT hover:bg-error hover:text-on-error transition-colors flex items-center gap-2" type="submit" {% if not failed_count %}disabled data-static-disabled="1" style="opacity:.45;pointer-events:none"{% endif %}>
+<span class="material-symbols-outlined text-[16px]">replay</span> Re-check failed ({{ failed_count }})
+</button>
+<p class="font-body-compact text-[11px] text-on-surface-variant mt-1 max-w-[220px]">Retries only the properties whose last check failed.</p>
+</form>
+<form action="/actions/company-check" method="post" onsubmit="return confirm('Re-check all replaces every property’s availability data with fresh results — a property whose page fails this sweep loses its old snapshot. Continue?')">
+<input name="force" type="hidden" value="1"/>
+<button class="px-4 py-2 border border-status-warning text-status-warning font-display-table text-display-table rounded-DEFAULT hover:bg-status-warning hover:text-on-primary transition-colors flex items-center gap-2" type="submit">
+<span class="material-symbols-outlined text-[16px]">restart_alt</span> Re-check all
+</button>
+<p class="font-body-compact text-[11px] text-on-surface-variant mt-1 max-w-[220px]">Fresh sweep &mdash; discards each property&rsquo;s previous data.</p>
+</form>
+</div>
+<p class="font-body-compact text-[11px] text-on-surface-variant mt-3">Re-uploading a file updates existing properties by name (no duplicates). If a file link is dead, the agent finds the property&rsquo;s official website or its StreetEasy page and remembers the working link.</p>
+</div>
+<!-- Portfolio, aggregated by link health: failed links first for review. -->
+{% macro prop_card(r) %}
+<div class="bg-surface-container-lowest border border-border-subtle rounded-lg p-3 mb-2 {% if r.check_status == 'FAILED' %}border-l-4 border-l-error{% elif r.matched %}border-l-4 border-l-tertiary{% endif %}">
+<div class="flex justify-between items-start gap-3">
+<div class="min-w-0">
+<div class="flex items-center gap-2 flex-wrap">
+<a class="font-display-table text-[14px] text-on-surface hover:text-tertiary" href="/company/{{ r.id }}">{{ r.name }}{% if r.page_name %} <span class="text-on-surface-variant font-normal">&middot; {{ r.page_name }}</span>{% endif %}</a>
+{% if r.selected %}<span class="font-label-caps text-label-caps px-2 py-0.5 rounded bg-status-shortlisted/10 text-status-shortlisted border border-status-shortlisted/30">SELECTED</span>{% endif %}
+{% if r.matched %}<span class="font-label-caps text-label-caps px-2 py-0.5 rounded bg-tertiary-container/20 text-tertiary border border-tertiary/30">ON MAP &middot; IN INVENTORY</span>
+{% elif r.mapped %}<span class="font-label-caps text-label-caps px-2 py-0.5 rounded bg-surface-container text-on-surface-variant">ON MAP</span>{% endif %}
+{% if r.link_status == 'OK' %}<span class="font-label-caps text-label-caps px-2 py-0.5 rounded bg-secondary-container/30 text-secondary">LINK OK</span>
+{% elif r.link_status == 'REPLACED' %}<span class="font-label-caps text-label-caps px-2 py-0.5 rounded bg-secondary-container/30 text-secondary">LINK REPAIRED &middot; {{ r.url_kind or '' }}</span>
+{% elif r.link_status == 'FAILED' %}<span class="font-label-caps text-label-caps px-2 py-0.5 rounded bg-error-container text-on-error-container">LINK FAILED</span>
+{% else %}<span class="font-label-caps text-label-caps px-2 py-0.5 rounded bg-surface-container text-on-surface-variant">UNCHECKED</span>{% endif %}
+</div>
+<div class="font-body-compact text-[12px] text-on-surface-variant mt-1">
+{% if r.address %}{{ r.address }}{% if r.locality %}, {{ r.locality }}{% endif %} &middot; {% endif %}
+from {{ r.source_document }} &middot; last checked {{ r.last_checked }}
+</div>
+{% if r.check_status == 'CHECKED' %}
+<div class="font-body-compact text-[12px] mt-1">
+{% if r.unit_count %}
+<span class="text-secondary font-semibold">{{ r.unit_count }} available unit{{ 's' if r.unit_count != 1 else '' }}:</span>
+{% for u in r.units %}<span class="font-label-caps text-label-caps px-2 py-0.5 rounded bg-surface-container text-on-surface ml-1">{{ u }}</span>{% endfor %}
+{% elif r.no_units_stated %}
+<span class="text-on-surface-variant">Page states no current availability info.</span>
+{% else %}
+<span class="text-on-surface-variant">No available units advertised on the page.</span>
+{% endif %}
+</div>
+{% if r.evidence %}<div class="font-body-compact text-[11px] text-on-surface-variant mt-1 italic">&ldquo;{{ r.evidence }}&rdquo;</div>{% endif %}
+{% elif r.check_status == 'FAILED' %}
+<div class="font-body-compact text-[12px] text-error mt-1">{{ r.check_error or 'Check failed.' }} &mdash; fix the link in the company file and re-upload, or remove the row.</div>
+{% if r.unit_count %}
+<div class="font-body-compact text-[12px] mt-1">
+<span class="text-status-warning font-semibold">Snapshot from the last successful check kept:</span>
+{% for u in r.units %}<span class="font-label-caps text-label-caps px-2 py-0.5 rounded bg-surface-container text-on-surface ml-1">{{ u }}</span>{% endfor %}
+</div>
+{% endif %}
+{% else %}
+<div class="font-body-compact text-[12px] text-on-surface-variant mt-1">Not checked yet &mdash; run &ldquo;Check availability now&rdquo;.</div>
+{% endif %}
+</div>
+<div class="flex gap-2 shrink-0">
+<a class="h-7 px-2 border border-tertiary text-tertiary rounded-DEFAULT hover:bg-tertiary hover:text-on-tertiary transition-colors flex items-center font-display-table text-[12px]" href="/company/{{ r.id }}">Detail</a>
+{% if r.url %}
+<a class="h-7 px-2 border border-border-subtle text-on-surface-variant rounded-DEFAULT hover:bg-surface-container-high flex items-center font-display-table text-[12px]" href="{{ r.url }}" rel="noopener" target="_blank">Open ↗</a>
+{% endif %}
+<form action="/actions/company-delete/{{ r.id }}" method="post" onsubmit="return confirm('Remove {{ r.name | e }} from the portfolio?')">
+<button class="h-7 px-2 border border-border-subtle text-on-surface-variant rounded-DEFAULT hover:bg-error hover:text-on-error hover:border-error transition-colors flex items-center font-display-table text-[12px]" type="submit">Remove</button>
+</form>
+</div>
+</div>
+</div>
+{% endmacro %}
+{% if not groups %}
+<div class="glass-panel rounded-xl p-4">
+<p class="font-body-compact text-body-compact text-on-surface-variant">No company properties yet &mdash; upload the company file above.</p>
+</div>
+{% endif %}
+{% for g in groups %}
+<div class="glass-panel rounded-xl p-4">
+<h2 class="font-label-caps text-label-caps border-b border-border-subtle pb-2 mb-3 {% if g.tone == 'error' %}text-error{% elif g.tone == 'ok' %}text-secondary{% else %}text-on-surface-variant{% endif %}">{{ g.title }}{% if loop.first %} <span class="text-on-surface-variant font-normal normal-case">&nbsp;&middot; {{ total }} properties &middot; {{ unit_total }} available units total</span>{% endif %}</h2>
+{% for r in g.rows %}{{ prop_card(r) }}{% endfor %}
+</div>
+{% endfor %}
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+    const dot = document.getElementById('check-dot');
+    const text = document.getElementById('check-text');
+    // One live condition indicator (owner request 2026-08-29): polls the
+    // check job's heartbeat; reloads once when a run it watched completes.
+    const AMBER = '#F59E0B', GREEN = '#006c4a', RED = '#BA1A1A', SLATE = '#94a3b8';
+    let sawActive = false;
+    function set(color, label, pulse) {
+        dot.style.background = color;
+        dot.className = 'w-2 h-2 rounded-full' + (pulse ? ' animate-pulse' : '');
+        text.textContent = label;
+    }
+    function setButtons(disabled) {
+        document.querySelectorAll('form[action="/actions/company-check"] button').forEach(b => {
+            if (b.dataset.staticDisabled) return;  // server-disabled stays disabled
+            b.disabled = disabled;
+            b.style.opacity = disabled ? '.45' : '';
+            b.style.pointerEvents = disabled ? 'none' : '';
+        });
+    }
+    function render(s) {
+        const active = s.state === 'launching' || s.state === 'running';
+        setButtons(active && !s.stalled);
+        if (active && s.stalled) {
+            set(AMBER, `CHECK STALLED — no progress since ${s.updated_stamp || '?'}`, false);
+        } else if (s.state === 'launching') {
+            set(AMBER, 'STARTING CHECK…', true);
+            sawActive = true;
+        } else if (s.state === 'running') {
+            const c = s.counts || {};
+            const failed = (c.FAILED || 0) + (c.ERROR || 0);
+            set(AMBER, `CHECKING ${s.done ?? 0}/${s.total ?? '?'}` +
+                (s.current ? ` · ${s.current}` : '') +
+                (c.COMMUTES ? ` · ${c.COMMUTES} commutes` : '') +
+                (failed ? ` · ${failed} failed` : ''), true);
+            sawActive = true;
+        } else if (s.state === 'done') {
+            if (sawActive) { location.reload(); return; }
+            const c = s.counts || {};
+            const failed = (c.FAILED || 0) + (c.ERROR || 0);
+            set(failed ? AMBER : GREEN,
+                `LAST CHECK ${s.finished_stamp || s.updated_stamp || ''} · ${c.CHECKED || 0} checked` +
+                (c.COMMUTES ? ` · ${c.COMMUTES} commutes` : '') +
+                (failed ? ` · ${failed} failed` : '') +
+                (c.SKIPPED_FRESH ? ` · ${c.SKIPPED_FRESH} fresh` : ''), false);
+        } else if (s.state === 'failed') {
+            set(RED, `CHECK FAILED — ${s.error || 'see logs'}`, false);
+        } else {
+            set(SLATE, 'NO CHECK RUNNING', false);
+        }
+    }
+    async function poll() {
+        try {
+            render(await (await fetch('/api/company/status')).json());
+        } catch (e) { /* app restarting — keep last state */ }
+    }
+    poll();
+    setInterval(poll, 3000);
+    // Uploads are synchronous: flip the indicator while the file parses.
+    const upload = document.querySelector('form[action="/actions/company-upload"]');
+    if (upload) upload.addEventListener('submit', () => set(AMBER, 'PARSING FILE…', true));
+})();
+</script>
+{% endblock %}

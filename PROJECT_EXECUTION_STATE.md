@@ -594,6 +594,32 @@ Center" (projects/8071777848628563239), 5 screens; design system = Kinetic
 Mapview (same as md/DESIGN.md). Screens' HTML + screenshots cached in the
 session scratchpad.
 
+Chinese posts + NJ official sites + NJ no-fee (2026-08-18, owner feedback):
+(1) webui/zh.py — deterministic Chinese for facts: LAUNDRY_ZH (enum→中文),
+amenity + cuisine substring translation tables (untranslatable items DROPPED,
+never shown in English), TRANSIT_MODE_ZH; facts block now fully Chinese
+(store/brand names + station names + transit lines stay English per owner
+prompt rule 11); trailer adds a no-English rule. Owner prompt file verified:
+verbatim + my Chinese-only addendum. (2) OWNER RULE: NJ (JC/Hoboken/Fort
+Lee) listings always get 中介费:无中介费 fact line. (3) OFFICIAL-BUILDING-
+WEBSITE fallback in listing_content service: when the aggregator page blocks
+extraction (apartments.com), Tavily-search "<address> apartments official
+website leasing", skip aggregator+.gov/.org domains, extract the candidate,
+and REQUIRE the building's street address to appear in the page before
+trusting it (wrong-building guard). Live test: hudsonterrace.com found+
+enriched for 2175 Hudson Ter. Wired into jobs/detail_enrichment
+(search_provider param). (4) New fact-check chip: 🎓/分钟 lines with NO
+verified commute facts flagged as fabricated (Fort Lee live draft invented
+"Yeshiva University 6分钟"). Live Fort Lee draft otherwise compliant:
+中文品类 (咖啡店/韩餐/多米尼加菜), brands kept, 无中介费, price masked.
+CAUTION FOR FUTURE SESSIONS: never round-trip source files through PS5.1
+Get-Content/WriteAllText without -Encoding — it GBK-mangles UTF-8 (had to
+repair service.py mojibake). Gate: 159 tests, ruff, mypy clean.
+PENDING: owner asked for all-in-one shutdown — stop_app.bat +
+scripts/stop_app.ps1 are WRITTEN (kills 8600/8601 listeners, docker compose
+stop, -IncludeDocker switch) but the live shutdown test was interrupted by
+the owner; untested end-to-end.
+
 One-click workspace (2026-08-18, owner request): start_app.ps1 now hosts the
 FULL environment — [1-3] Docker engine + DB container + readiness, [4/5]
 local Qwen GPU server (probes 127.0.0.1:8601; if down, spawns
@@ -945,3 +971,529 @@ gate green (141 tests, ruff, mypy).
   op.drop_constraint (naming convention prepends `ck_<table>_` automatically).
 - StreetEasy adapter has no detail-fetch: the snippet is the capture; source_status
   stays UNKNOWN because a snippet cannot prove availability.
+
+## Session 5 (2026-08-29) — COMPANY PORTFOLIO PORTAL + OWNER LLM API CONFIG
+
+Owner request: portal for the company property file (docx/pdf), agent records
+all listed sources + checks available units, dead links repaired via official
+site / StreetEasy, company properties highlighted on the map; plus a Settings
+button to enter the user's own LLM API (OpenAI or any compatible endpoint).
+All shipped and live-verified:
+
+1. **DB**: new `app.company_property` (migration 4e11e1c637fe): name (+
+   name_fingerprint unique — re-uploads upsert, never duplicate), source doc,
+   original/resolved URL + kind (ORIGINAL|OFFICIAL_SITE|STREETEASY),
+   link_status (UNCHECKED|OK|REPLACED|FAILED), address/locality/lat/lon,
+   matched_building_id FK (SET NULL), availability JSONB snapshot,
+   check_status/check_error/last_checked_at. Reference data only — never
+   feeds canonical listings or facts.
+2. **File parsing** (`enrichment/company/portfolio.py`): docx via stdlib
+   zipfile/XML (hyperlink targets from document.xml.rels, text in paragraph
+   order incl. tables), pdf via new dep `pypdf` (text + /URI annotations),
+   plain-text URLs regexed. Entry extraction: LLM pairs names↔links
+   (company_file_parse task; URLs accepted ONLY if literally present in the
+   document — model can never introduce links) with deterministic
+   anchor/nearest-line fallback when no key or LLM fails.
+3. **Availability service** (`enrichment/company/service.py`): Tavily
+   Extract on resolved→original URL; on failure repairs the link — official
+   website search (aggregator list excluded; added cityrealty/propertyshark/
+   loopnet/niche to `_AGGREGATOR_DOMAINS` after a live repair landed on
+   cityrealty; stored OFFICIAL_SITE urls on the blocklist are re-repaired),
+   then site:streeteasy.com search; wrong-building guard (name-token /
+   address match required). LLM extracts ONLY explicitly advertised units
+   (company_availability_extract; rent sanity 300..100k). Extracted address
+   geocoded via NycGeosearch→Census (NJ skips NYC geocoder — the 2026-08-18
+   bug class); matched to canonical buildings by address_fingerprint.
+4. **Job** `jobs/company_refresh.py` (`--force`; 1-day freshness skip;
+   commit-per-property), spawned from the portal.
+5. **Web UI**: new nav page **/company** (upload & parse, Check availability
+   now / Re-check all, per-property cards with link/check/unit chips +
+   evidence quotes + Remove). Map: matched buildings' markers get ★ +
+   tertiary (#943700) ring + COMPANY chip on cards and mini-detail
+   (`/api/listing/{id}/card` returns `company`); geocoded-but-undisplayed
+   company properties get standalone named markers with popups.
+6. **LLM API panel** (Settings): api key (password, never redisplayed;
+   masked tail shown), optional base URL (any OpenAI-compatible endpoint),
+   optional model id. Saves to `.env` via new `config/env_file.py`
+   (preserves unrelated lines; None deletes; UTF-8), mirrors os.environ
+   (spawned jobs), updates live settings, probes GET /models ("Save & test").
+   `OpenAiLlmExecutor` gained base_url + chat-completions wire path (custom
+   endpoints lack the Responses API / web_search; web-research tasks then
+   fail validation honestly — noted in UI). New
+   `executor_from_settings()` used by webui commute/POI, detail_enrichment,
+   company jobs.
+7. **Map tiles fixed en route**: CARTO free basemaps now return "API KEY
+   REQUIRED" tiles (observed live) — all three Leaflet maps switched to
+   keyless OSM standard tiles (B7). Also fixed fitBounds degenerating to
+   zoom 0 (world view): Tailwind CDN lays out after window load, so the
+   inventory map retries the initial fit until zoom is sane and discards
+   degenerate saved views.
+8. **Live verification** (real Tavily + OpenAI): uploaded a 3-property docx
+   (LLM parse: 3 added) → refresh job: Avalon Hoboken + Hudson Point CHECKED
+   via original rent.com links (pages honestly state no current availability
+   → no_units_stated), Journal Squared's deliberately dead link repaired via
+   web search on first pass, honest FAILED after blocklist tightening (its
+   real official site blocks extraction; StreetEasy has no NJ inventory).
+   All 3 geocoded + matched to inventory buildings; ★ markers + COMPANY
+   mini-detail verified in browser. NOTE: these 3 demo rows remain in
+   rental_dev — owner can Remove them on /company or overwrite by uploading
+   the real company file.
+9. Gate: **173 passed** (14 new: docx parse, deterministic/LLM pairing +
+   URL-injection guard, env-file upsert, service link-repair/honest-failure/
+   building-match on real PostGIS, portal upload/reupload/reject, llm-config
+   persist/validate), ruff clean, mypy clean (92 files). .env.example gained
+   RENTAL_PROVIDER_LLM_BASE_URL.
+
+## Session 5, second round (2026-08-29) — PORTAL POLISH AFTER OWNER'S REAL FILE
+
+Owner uploaded the real company file (kie组新人培训.pdf → 171 properties, 146
+checked, 369 available units on first pass) and reported: nav-rail alignment
+issue (+ detail page), the "name is actually an address" case (file says
+"160 water st"; the building is Pearl House), and wanted a re-check-failed
+button. Shipped:
+
+1. **Nav rail alignment fixed** (base.html): active items carried a
+   border-l-2 that inactive items lacked → active icon/label shifted 2px;
+   all rail items (incl. Settings, which was also missing the scale-95
+   transform) now share identical box metrics with border-transparent.
+2. **Company info everywhere a property is shown**: full detail page
+   (/listing/{id}) now shows "★ COMPANY PROPERTY · name" under the locality
+   (route queries CompanyProperty by building); standalone company markers
+   open the same floating mini-detail panel as listings (name, COMPANY tag,
+   address, per-unit availability with rents + timing, last-checked, Open
+   page) instead of a stock Leaflet popup.
+3. **Address-as-name optimization** (service): _looks_like_address detects
+   "160 water st"-shaped names → name seeds address_text, so the property
+   geocodes + matches inventory EVEN when its page is unreachable (location
+   resolution now runs on all check exit paths); search queries expand
+   street suffixes ("st"→"street" — quoted abbreviated queries were the
+   Pearl-House failure) and try multiple candidates (up to 3 official +
+   2 StreetEasy, /building//complex/ paths only — blog posts rejected);
+   wrong-building guard requires house number + street token for
+   address-shaped names. New CompanyPageAvailability.property_name captures
+   the page's marketing name → stored as availability.page_property_name,
+   shown as "160 water st · Pearl House" on /company and in map panels, and
+   used in later repair searches.
+4. **Company geocoding hardened**: NJ detection is now fuzzy ("Jersey City,
+   NJ 07306", "Downtown Jersey City" etc. — exact NJ_LOCALITIES matching let
+   NYC GeoSearch force NJ rows into the boroughs again: 3 acres/Leleo/
+   Vantage had Manhattan-latitude points); NYC-metro bounding box
+   (40.4–41.2 / −74.5–−73.5) rejects wrong matches (Gloversville case);
+   re-geocodes on every check so poisoned rows self-heal; out-of-metro
+   resolution clears stored coords, provider failure keeps them.
+5. **Re-check failed (N) button** on /company → jobs/company_refresh
+   --failed-only (check_status != CHECKED). Live result on the owner's 25
+   failed rows: 160 water st CHECKED (repaired to Gensler's Pearl House
+   project page — architect site; blocklist can't cover every non-leasing
+   domain, page_property_name still captured), 224 W 124th → real official
+   site 224w124.com, etc.
+6. Blocklist grew: news/press/info domains (yimby, prnewswire, jerseydigs,
+   njbiz, 6sqft, curbed, therealdeal, uhomes, transparentcity, leaseswap,
+   luxuryrentalsmanhattan, redfin, compass, blueground, leasing.ai).
+7. Gate: **176 passed** (3 new: suffix-expansion/address-detection unit,
+   geocode-despite-dead-page, StreetEasy-building-fallback + page-name
+   capture), ruff, mypy clean. Browser-verified: rail aligned, Re-check
+   failed (25) button, detail-page company banner (Avalon Hoboken), OSM
+   tiles on detail map.
+   Final live tally after the failed-only pass: 23/25 recovered → **169/171
+   CHECKED, 454 available units, 135 mapped**; remaining 2 failures are
+   honest file artifacts ('626 Nwark' typo, 'EagleLoft2' duplicate of the
+   checked 'Eagle lofts'). Owner confirmed the address-as-name case was an
+   example — the fix is generic (regex shape detection), not per-property.
+
+## Session 5, third round (2026-08-29) — PANEL UNIFICATION + RAIL FIX + GROUPED PORTFOLIO
+
+Owner feedback batch: (1) Nav rail REALLY fixed this time — root cause was
+11px letter-spaced labels ("Company", "Selected") wider than the 64px rail
+item, spilling over the active item's border-l-2; the border indicator is
+removed entirely (active = blue pill bg + filled icon) and rail labels are
+9px nowrap caps that fit (base.html; Settings included). (2) Map floating
+panel: company properties now render through the SAME panel code as
+listings — shared JS builders (panelHeader/panelChip/panelSection/panelRow/
+panelBtn*) in inventory.html; company panel has identical sections (header
+with rent-range on the right, chips, unit rows with rent + availability
+timing, footer buttons) in tertiary #943700 instead of blue. Server sends
+unit_list as {label, rent, when} + rent_label range. (3) Panel is anchored
+to the property: placed beside the marker via latLngToContainerPoint
+(flips sides, clamps to map), repositions on map move/zoom, keeps its
+anchor when switching units, and map background clicks close it
+(map.on('click', hideMiniDetail)); list-card clicks look the anchor up
+from the markers array. (4) /company aggregates into review groups:
+FAILED LINKS — NEEDS REVIEW first (red left-accent cards + guidance
+line), then WORKING LINKS, then NOT CHECKED YET (Jinja macro prop_card;
+route passes groups). Gate: 176 tests, ruff, mypy clean. Browser-verified:
+rail clean at narrow width, grouped portfolio, company panel w/ $6,355–
+$8,430 range + unit rows, click-away close, panel follows pan (pos1→pos2
+test), Avalon Hoboken listing panel unchanged incl. company line.
+
+## Session 5, fourth round (2026-08-29) — COMPANY SHORTLISTS, GREY MARKERS, SIMPLE BASEMAP, INWOOD
+
+Owner feedback: company panel missing "Save for client"; grey out company
+properties with no available units; simpler basemap without building
+shapes; Inwood coverage missing. Shipped:
+
+1. **Company properties join client shortlists** (migration 93d5b52a3b5e):
+   client_shortlist_entry.canonical_listing_id now nullable + new
+   company_property_id FK (ondelete CASCADE) + CHECK exactly_one_target
+   (num_nonnulls = 1) + unique (preset, company). ClientShortlistService.
+   set_entry targets exactly one of listing/company (ValueError otherwise;
+   HUMAN-only + audit preserved, target_id = whichever). queries.
+   shortlist_entries outer-joins both and returns uniform rows (company:
+   layout "COMPANY", rent = lowest advertised unit, lifecycle = "N avail
+   units"/check_status, url). Webui /actions/shortlist + /actions/
+   remove-entry accept listing_id OR company_id; company map panel gained
+   the same "Save for client…" form (tertiary-styled); clients page renders
+   company entries with ★ + COMPANY + $low+ and per-row Remove. Verified
+   live end-to-end (saved 5203 center blvd to "Amy" via the panel form,
+   row rendered, then removed via the remove action — test data cleaned).
+2. **Grey no-availability markers**: standalone company markers with
+   check_status CHECKED and 0 advertised units render slate (#64748B
+   accent/ring/star, 75% opacity) instead of tertiary — 62 of the owner's
+   properties currently grey, ones with units stay orange. Unchecked stays
+   tertiary (unknown ≠ none).
+3. **Basemap simplified** (owner asked; option exists): all three Leaflet
+   maps switched OSM standard → Esri World Light Gray Canvas (keyless, no
+   building footprints, desaturated — the Positron look DESIGN.md wanted).
+   maxNativeZoom 16 with upscale to 19 (native tiles stop at 16).
+4. **Inwood acquisition partition** added to StreetEasy GEOGRAPHY_TERMS
+   (nbhd_inwood) → 27 SE queries/run. QUOTA NOTE: daily total now
+   SE 27 + apts 3 + rent 18 = 48 ≈ 1,056/mo vs Tavily's 1,000 free
+   credits — owner should drop a low-yield partition or expect end-of-month
+   throttling. Listings appear after the next acquisition run.
+   Partition-count tests updated (24→27, 8×3→9×3).
+5. Gate: **177 passed** (new: company shortlist entry service+query test
+   incl. exactly-one-target), ruff, mypy clean. Browser-verified at wide
+   viewport: gray canvas without building shapes, orange-vs-grey company
+   markers in FiDi, panel save form, Amy entry row.
+
+## Session 5, fifth round (2026-08-29/30) — DISCARD SAFETY, MARKER PARITY, SECTIONED SETTINGS, NY TIME
+
+Owner feedback: company markers showed the NAME (regular ones show layout+
+price); full re-acquisition discarded company properties (CONFIRMED — the
+owner's 20:09 EDT manual run wiped all 171 rows via TRUNCATE app.address
+CASCADE → building FK → company_property, and canonical_listing →
+client_shortlist_entry); settings should be sectioned like Apple settings;
+timestamps looked wrong (they were raw UTC). Shipped:
+
+1. **discard_inventory now preserves the company portfolio**: snapshots
+   app.company_property + company-targeted shortlist entries before the
+   TRUNCATE and restores them after (matched_building_id → NULL; re-matches
+   on next check). Test: test_discard_inventory_preserves_company_portfolio.
+   DATA RECOVERED: re-ingested local_data/raw/company/kie组新人培训.pdf via
+   the upload endpoint (167 restored, LLM parse) + availability check
+   relaunched to rebuild units/geocodes/matches.
+2. **Marker parity**: company markers now show the same compact badge as
+   listings ("$3.4k" / "3u $6.4k–$8.4k" / "2u" / bare ★ when nothing to
+   show) — server-computed marker_label via _kfmt; the NAME lives in the
+   detail panel only. Grey idle styling retained.
+3. **Settings sectioned (Apple style)**: left section list (Data Refresh /
+   LLM API / Data Review with attention badge / Logs), one topic rendered
+   at a time via ?section=; all action redirects target their section;
+   legacy /review→?section=review, /operations→?section=logs; refresh copy
+   now states company properties are kept and managed on /company. Test:
+   test_settings_sections_show_one_topic_at_a_time.
+4. **New York time display**: webui was printing UTC-aware datetimes
+   verbatim (Postgres session tz). _stamp/_local now convert to
+   ZoneInfo("America/New_York") (= Settings.timezone default; change
+   together); detail first_seen/last_change + dashboard last_refresh
+   converted too. Verified: tonight's 00:09Z run displays 08-29 20:09.
+5. Owner's 20:09 re-acquisition ran with the NEW 27-partition StreetEasy
+   plan → **13 Inwood-area listings live** (streeteasy source run:
+   90 discovered / 86 new).
+6. Gate: **179 passed** (discard-preservation + settings-sections tests;
+   /review//operations redirect assertions updated), ruff, mypy clean.
+
+## Session 5, sixth round (2026-08-30) — LIVE COMPANY CHECK INDICATOR
+
+Owner request: one live condition indicator for company loading. Shipped:
+the availability-check job now heartbeats its state to
+local_data/logs/company_refresh_status.json (jobs/company_refresh.py:
+status_path()/write_status(), atomic tmp+replace, best-effort — a status
+hiccup never breaks the job; states launching/running/done/failed with
+mode, total, done, counts, current property name, finished_at).
+/actions/company-check seeds "launching" before spawning so the pill
+reacts instantly; new GET /api/company/status serves it with NY-time
+stamps and a stalled flag (heartbeat quiet >4 min while running).
+/company has ONE status pill (top right): grey NO CHECK RUNNING /
+pulsing amber STARTING · CHECKING n/total · current · k failed /
+green-or-amber LAST CHECK <stamp> · checked/failed/fresh / red CHECK
+FAILED — error. Polls every 3s; disables the three check buttons during
+a run (server-disabled buttons untouched via data-static-disabled);
+auto-reloads once when a watched run completes; upload submit flips the
+pill to PARSING FILE…. Verified live end-to-end (failed-only run:
+launching → done pill "LAST CHECK 08-29 20:38 · 0 checked · 2 failed",
+buttons re-enabled; the 2 fails are the known file artifacts). Also
+confirmed the post-wipe restore completed: 165/167 CHECKED, 604
+available units. Gate: **180 passed** (new endpoint test incl. stalled
+detection; client fixture gained paths.logs), ruff, mypy clean.
+
+## Session 5, seventh round (2026-08-30) — ADD-CLIENT 500 FIXED
+
+Owner report: "add a client → internal service error." Root cause from the
+uvicorn traceback: uq_client_search_preset_label UniqueViolation — the
+owner had clicked Remove on Amy and Jason at 20:08 EDT (archived, so
+hidden from the list) and then tried to re-add "Amy"; /actions/preset let
+the IntegrityError escape as a 500. Fixes: /actions/preset now trims the
+label (blank → friendly error), does a case-insensitive duplicate check —
+ACTIVE match → "Client “X” already exists" error banner; ARCHIVED match →
+new ClientShortlistService.restore_preset (audited, HUMAN-only) un-archives
+it, bringing back its profile + entries, with a "Restored previously
+removed client" banner and the client preselected. clients.html gained
+error/started banners (main column restructured; new wrapper div).
+Live-verified: re-adding "Amy" restored her with full profile (budget
+4000/1BR/LIC/09-24 move-in). Jason remains archived — typing his name +
+Add restores him the same way. Gate: **182 passed** (duplicate-is-friendly
+incl. case/whitespace variants + blank rejection; archive→re-add→restored
+round trip), ruff, mypy clean. NOTE: browser-pane automation clicks
+sometimes fail to submit this form (JS f.submit() used for verification) —
+pane quirk only; real user clicks submit fine (the owner's 500 proves it).
+
+## Session 5, eighth round (2026-08-30) — SELECT FOR AD ON COMPANY PANELS
+
+Owner report: company mini-detail panel lacked Select for Ad. Shipped full
+selection parity (migration 45f4d0d1d668): marketing_selection.
+canonical_listing_id nullable + company_property_id FK (CASCADE) + CHECK
+exactly_one_target + unique per company; MarketingSelectionService.
+set_selection targets exactly one of listing/company (ValueError otherwise,
+HUMAN-only + audit with correct target_type). New POST
+/actions/company-select/{id} toggle; queries.selected_company_ids() +
+selected_company_properties(). Company map panel footer now mirrors the
+listing panel: [Select for Ad (tertiary solid) | Deselect (blue outline
+when selected)] · Full detail · Open ↗; header star + SELECTED chip turn
+blue when selected; selected company markers get the blue accent bar.
+/selected gained a "★ Selected company properties" table (units, rent
+range, Save-for-client, Open page, Deselect); /company cards show a
+SELECTED chip. Live-verified round trip on Watermark Lic (select → blue
+panel/marker + Selected-page row → deselect; test selection cleaned up).
+NOTE: dashboard "Selected for Marketing" count now includes company
+selections. NOTE: owner re-archived Amy at 20:51 — no active clients at
+verification time, so Save-for-client rows correctly hid (restore works
+by re-adding the name). Gate: **184 passed** (select round-trip via UI
+action + exactly-one-target guard), ruff, mypy clean.
+
+## Session 5, ninth round (2026-08-30) — COMPANY PROPERTY DETAIL PAGE
+
+Owner request: dedicated detail page for company properties, identical in
+structure to the listing detail page. Shipped GET /company/{id} +
+company_detail.html mirroring detail.html's two-column layout with
+tertiary accents: header (★ name · page_name, address, "COMPANY PROPERTY ·
+from <file>" banner, rent range, check-status + Selected chips), four stat
+tiles (available units / link status·kind / last checked / added),
+AVAILABLE UNITS rows (layout · unit label · availability · rent) with
+honest empty/failed/unchecked states, PAGE EVIDENCE quote (+ "match
+unconfirmed" warning), ALSO IN ACQUIRED INVENTORY section linking matched
+buildings' listing pages, SOURCE LINKS table (company-file link +
+agent-repaired link with SUPERSEDED status), bottom actions panel (Select
+for Ad/Deselect + Save for client), right column map (★ compact-rent
+marker on gray canvas) + NEARBY TRANSIT via new queries.transit_near_point
+(live PostGIS ST_DWithin 2km on active complexes, straight-line labeled,
+Google Maps walking links) + commute-analysis note pointing at acquired
+listings. Entry points now route there: /company card names + new Detail
+button, map panel "Full detail", Selected-page company names, client-entry
+rows, and the listing page's COMPANY banner links back via company_id.
+Live-verified on Watermark Lic (units/rents, evidence, source links,
+transit: Court Sq 174 m etc., map marker). Gate: **185 passed** (detail
+page render + unknown-id redirect), ruff, mypy clean.
+
+## Session 5, tenth round (2026-08-30) — COMPANY COMMUTES IN THE CHECK + DESTINATION-WIPE FIX
+
+Owner request: commute analysis for company properties during check/
+re-check. Shipped (migration 39a0f7866dca): commute_result.
+canonical_listing_id nullable + company_property_id FK (CASCADE) + CHECK
+exactly_one_target. CommuteResearchService.research()/get_fresh_result()
+target exactly one of listing/company (input_refs/input_hash keyed by
+target; same no-memory/sources contract + 14-day cache).
+jobs/company_refresh: after every successful CHECKED, _research_company_
+commutes() runs — bounded to properties WITH advertised units AND
+coordinates, researching the 2 NEAREST active destination anchors
+(PostGIS ST_Distance; COMMUTE_DESTINATIONS_PER_PROPERTY=2); cache makes
+repeat checks free; failures logged, never fail the check; counts
+["COMMUTES"] in the status file → the live pill shows "· N commutes".
+Company detail page: full COMMUTE ANALYSIS panel (same cards via new
+shared _shape_commute_cards used by both detail routes; queries.
+commutes_for_company/_shape_commutes refactor) + on-demand form → new
+POST /actions/company-commute/{id}.
+**Critical bug found en route**: app.destination has an address_id FK →
+TRUNCATE app.address CASCADE has been silently WIPING all 20 destination
+anchors on every full re-acquisition (confirmed: 0 rows after the owner's
+20:09 run; transit/boundaries survived). discard_inventory now snapshots/
+restores destinations (EWKT for the geography column — WKB round-trip
+needs shapely; address_id→NULL) plus company-targeted marketing
+selections, commute results, and their ModelExecution audit rows
+(job_id→NULL; ops.job cascade clears model_execution). Registry re-seeded
+live (20 anchors, v1-reviewed). Live verified: Watermark Lic → Grand
+Central researched via the new company action: 13–20 min, 7/<7> routes,
+MEDIUM confidence, validation PASSED against local MTA data, 3 web
+sources — card renders on /company/{id}. Cost note: first full check with
+commutes ≈ 2 research calls per unit-bearing property (~60 today ≈ 120
+Terra web-research calls, ~30-90s each — the job runs long once, then
+the cache holds for 14 days). Gate: **186 passed** (company research
+persist/cache/guard + query shaping; discard test extended to destinations
++ company commutes), ruff, mypy clean.
+
+## Session 5, eleventh round (2026-08-30) — QUOTA INCIDENT, DISCARD SEMANTICS, WALK MINUTES
+
+Owner reports: 164 properties showed LINK FAILED while their detail pages
+still showed units; wants re-check-all to discard old data; commutes
+automatic (nearest anchor, e.g. Inwood→Columbia); transit in minutes not
+meters. ROOT CAUSE of the 164: **Tavily plan usage limit exhausted (HTTP
+432)** — the owner's ~21:30 Re-check all got 432 on every extract and the
+old code marked each property FAILED (keeping stale availability →
+the contradictory display). Fixes:
+
+1. **Quota-aware plumbing**: TavilyExtractClient raises TavilyQuotaError
+   on HTTP 429/432 (other HTTP codes stay page-level failures);
+   CompanyAvailabilityService.check() returns RATE_LIMITED and touches
+   NOTHING; company_refresh aborts the whole run on first RATE_LIMITED
+   (status file state=failed, "Tavily usage limit reached — check aborted,
+   existing data untouched"); detail_enrichment breaks its batch likewise.
+2. **Discard semantics (owner, refined mid-turn: "only recheck all")**:
+   check(discard_stale=force) — the Re-check all sweep clears a property's
+   previous snapshot on failure; ordinary/failed-only checks KEEP it, and
+   the UI now labels retained data honestly ("Snapshot from the last
+   successful check kept" chips on the card; amber note + snapshot stamp
+   on the detail page). Re-check all button warns via confirm.
+3. **Data repaired**: 162 quota-victim rows restored (FAILED+availability →
+   CHECKED, link status from resolved_url_kind, last_checked_at from the
+   snapshot's checked_at) → back to 165 CHECKED / 2 FAILED.
+4. **Walk minutes**: transit_near_point adds walk_min_est =
+   ceil(m × 1.25 / 80) (street-route factor over straight line, ~80 m/min);
+   company detail shows "~N min walk · est. from X m straight-line".
+5. **Commutes running NOW despite the quota**: new --commutes-only job mode
+   skips page checks entirely (needs only the LLM key) and researches the
+   2 nearest anchors per unit-bearing geocoded property; spawned detached
+   (pid logged) over all 167 — heartbeats to the status pill ("· N
+   commutes"); nearest-anchor selection already gives Inwood→Columbia-type
+   pairing via PostGIS distance. NOTE: page checks stay blocked until the
+   Tavily quota resets or the plan is upgraded — the new abort makes that
+   safe.
+6. Gate: **187 passed** (quota-untouched-row test; ordinary-vs-force
+   discard test), ruff, mypy clean. Live-verified: 180 water st card
+   CHECKED/OK again; Watermark Lic transit shows "~3 min walk"; status
+   file mode=commutes_only running 4/167 with counts.COMMUTES growing.
+
+## Session 5, twelfth round (2026-08-30) — WALK MINUTES CORRECTED TO SPEC (04 §12)
+
+Owner asked whether the walk-minute method matched the other conversation's
+intent — it did NOT: 04 §12 forbids presenting straight-line distance as a
+walking time; walking minutes must come from a pedestrian router with
+plausibility validation. The ×1.25/80 straight-line estimate is REMOVED
+(walk_min_est deleted from transit_near_point). Replacement:
+enrichment/company/service.attach_nearby_transit(session, prop, router) —
+routes the 5 nearest complexes via the existing OsrmFootRouter (FOSSGIS,
+1s pacing) with 04 §12.2 plausibility checks (routed ≥ straight−30 m,
+0.5–2.2 m/s); results stored on availability["nearby_transit"]
+({stop, mode, straight_line_m, walking_m, walk_min}); implausible/failed
+routes keep walk_min NULL. Runs inside every successful check
+(walk_router param) and in the commutes-only job for rows missing it
+(counts TRANSIT_ROUTED). Detail page prefers stored routed rows
+("5 min walk · 348 m routed est."); the meters-only fallback is labeled
+"straight-line — routed walk pending" and shows NO minutes. Commutes+
+transit background job relaunched with the new code (cached commutes
+free). Live-verified on the owner's own example 180 water st · Aqua
+House: Fulton St 5 min walk/348 m routed, Wall St 6 min/430 m. Gate:
+**188 passed** (routed-attach + implausible-rejection test on real
+PostGIS), ruff, mypy clean.
+
+## Session 5, thirteenth round (2026-08-30) — AUTO SCHOOL+DESTINATION COMMUTES, COMPANY STUDIO
+
+Owner: commute panel "shows nothing" (diagnosis: the background job was
+mid-run at 49/167 and research was gated to unit-bearing properties);
+wants destinations picked automatically — nearby schools AND locations,
+chosen by distance like transit; and Studio didn't offer selected company
+properties. Shipped:
+
+1. **Per-type nearest destination selection**: _research_company_commutes
+   now picks the nearest anchor of EACH destination_type (ROW_NUMBER over
+   PARTITION BY destination_type ordered by ST_Distance — registry today:
+   12 UNIVERSITY_CAMPUS + 8 MAJOR_DESTINATION → nearest school + nearest
+   major destination per property; COMMUTE_DESTINATIONS_PER_TYPE=1). The
+   units>0 gate is REMOVED — every geocoded CHECKED property gets
+   commutes. Background job relaunched (per-type selection; prior work
+   cached); progressing (16 fresh commutes at 13/167).
+2. **Company properties in Studio**: dropdown lists selected company
+   properties ("★ name (n units, $range)", value company:<id>);
+   generate-post accepts the company target via a dedicated builder —
+   facts from the availability snapshot (units w/ gross rents + page-stated
+   可入住时间, page evidence, NJ no-fee rule, routed transit walk minutes,
+   researched ≤25-min commutes) → same local-Qwen prompt. Shared
+   refactor: _facts_block() + _fact_check_warnings() extracted module-level
+   and used by both generators (listing path now parses its id from the
+   raw form string). Selected-page company rows gained a Studio link;
+   draft verify-link routes to /company/{id}. Live-verified: Watermark Lic
+   draft generated with the researched Grand Central 13-20 分钟 commute and
+   emoji-masked prices; fact-check flagged invented 中餐/Whole Foods
+   claims. (Known shared limitation: the commute-invention warning only
+   fires when NO verified commute exists — extra invented schools next to
+   a real commute pass the deterministic check; operator review covers.)
+3. Gate: **190 passed** (per-type nearest-selection test incl. no-units
+   research; Studio company dropdown + generator round trip), ruff, mypy
+   clean.
+
+## Session 5, fourteenth round (2026-08-30) — COMPANY DETAIL = LISTING DETAIL (07 §11)
+
+Owner: company detail page must be exactly like the listing detail page,
+per the other conversation's requirements (= spec 07 §11). Shipped:
+
+1. **Extraction v2** (company-availability-v2 / schema 2):
+   CompanyPageAvailability gained laundry_type (LaundryType-constrained) +
+   laundry_evidence, amenities, fee_status + fee_evidence, description
+   (contact-redacted by instruction), floor_plan_present/url — same page,
+   same call, no extra cost; stored in the availability snapshot.
+2. **Check history** (migration a25dc39feba2: company_property.check_log
+   JSONB): every completed check appends {at, status, unit_count,
+   min/max_rent, event} — FIRST_CHECK / UNCHANGED / PRICE_CHANGED /
+   AVAILABILITY_CHANGED / CHECK_FAILED (vs previous CHECKED entry), newest
+   first, capped 30 — the company analogue of listing events.
+3. **Detail page parity**: tiles now match listing order (units / laundry
+   label via queries.laundry_label / days in portfolio / source-link count
+   + status); FLOOR PLAN section (honest "not captured" note); LAUNDRY
+   provenance note when unknown; CONFIRMED FACTS (PAGE-STATED) chips
+   (no-fee + amenities); DESCRIPTION (CONTACT-REDACTED); CHECK HISTORY &
+   EVIDENCE panel (days-in-portfolio + last-checked tiles, event table,
+   FACT EVIDENCE expander with quotes + "page-stated (LLM extract)"
+   derivation per 07 §11.4). Studio company facts gained 洗衣设施 /
+   楼内设施 (amenities_zh) / page-stated no-fee / description lines.
+4. NOTE: existing 165 rows carry v1 snapshots — new page facts + history
+   populate automatically on the next successful Tavily check (currently
+   quota-blocked); until then the new sections show honest unknown/
+   not-captured states. Live-verified on 180 water st · Aqua House: full
+   section stack renders, and the per-type commute job has already
+   delivered 3 researched cards there (Downtown Brooklyn 15–22m, WTC/FiDi
+   15–25m PASSED, NYU Tandon 15–25m PASSED).
+5. Gate: **191 passed** (check_log event-sequence test: FIRST_CHECK →
+   UNCHANGED → PRICE_CHANGED → CHECK_FAILED; detail-page parity asserts),
+   ruff, mypy clean.
+
+## Session 5, fifteenth round (2026-08-30) — AMENITIES FOR ALL PROPERTIES
+
+Owner: amenity information for all properties (company + regular).
+Coverage at start: listings 82/109 with a current amenities fact; company
+0/165 (v1 snapshots); Tavily still quota-blocked → filled via hosted WEB
+RESEARCH (04 §19A posture, same as commute/POI: sources required, memory
+forbidden). Shipped:
+
+1. **enrichment/amenities/research.py**: AmenityResearchService — task
+   "amenity_research" (added to WEB_SEARCH_TASK_TYPES), output {amenities,
+   laundry_type (LaundryType-constrained), fee_status, sources REQUIRED,
+   summary}; refuses no-source or empty results. record_listing_fact()
+   writes a normal amenities FactAssertion (LLM_DERIVED, MEDIUM, sources as
+   evidence) so listing chips/Studio pick it up through the standard
+   pipeline; apply_to_company() merges into the availability snapshot and
+   NEVER overwrites page-stated values (fills UNKNOWN laundry/fee only),
+   storing amenities_sources (surfaced in the detail page's FACT EVIDENCE
+   expander as "amenities (web-researched)").
+2. **jobs/amenity_backfill.py**: sweeps company rows lacking amenities +
+   active listings lacking a current amenities resolution; commit-per-
+   property; heartbeats to amenity_backfill_status.json. Launched detached
+   over 192 targets (165 company + 27 listings). Early results excellent —
+   "160 water st"/Pearl House: 24 amenities + IN_UNIT_W/D sourced from
+   pearlhousenyc.com (the REAL official site, which Tavily search had
+   never surfaced) + StreetEasy.
+3. Ops notes: owner clicked Re-check all at 22:19 → the round-11 quota
+   circuit breaker fired correctly (aborted, 0 damage, honest pill error).
+   Portfolio grew to 173 rows (owner re-upload; new rows PENDING until
+   Tavily resets). The commutes-only job had died mid-run (38/173 covered)
+   — relaunched (cached work skips), running alongside the backfill.
+4. Gate: **192 passed** (research sources-required refusal; company merge
+   fills-gaps-only; listing fact recording), ruff, mypy clean.

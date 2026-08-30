@@ -120,6 +120,8 @@
         white-space: nowrap; width: max-content; }
     .ka-marker .accent { width: 6px; flex: none; }
     .ka-marker .label { padding: 2px 6px; font: 700 10px/12px 'Inter', sans-serif; color: #191c1e; }
+    /* Company portfolio highlight: tertiary ring (Kinetic Mapview tertiary). */
+    .ka-marker.company { outline: 2px solid #943700; outline-offset: 1px; }
     {% block extra_style %}{% endblock %}
 </style>
 </head>
@@ -129,18 +131,20 @@
 <div class="mb-8 flex flex-col items-center">
 <a class="w-10 h-10 rounded-DEFAULT bg-primary-container flex items-center justify-center text-on-primary-container font-headline-panel text-headline-panel font-bold" href="/">NYC</a>
 </div>
-<div class="flex flex-col gap-2 w-full px-2">
+<!-- Rail labels ("Company", "Selected") must fit the 64px rail: no side
+     borders (they collided with wide labels), 9px non-wrapping caps. -->
+<div class="flex flex-col gap-2 w-full px-1">
 {% for item in nav_items %}
-<a aria-label="{{ item.label }}" class="flex flex-col items-center justify-center p-2 rounded-DEFAULT transition-transform scale-95 active:scale-90 {% if item.active %}text-primary border-l-2 border-primary bg-surface-container-lowest{% else %}text-on-surface-variant hover:bg-surface-container-high transition-colors{% endif %}" href="{{ item.href }}">
+<a aria-label="{{ item.label }}" class="flex flex-col items-center justify-center px-0.5 py-2 rounded-DEFAULT transition-transform scale-95 active:scale-90 overflow-hidden {% if item.active %}text-primary bg-surface-container-lowest{% else %}text-on-surface-variant hover:bg-surface-container-high transition-colors{% endif %}" href="{{ item.href }}">
 <span class="material-symbols-outlined" {% if item.active %}style="font-variation-settings: 'FILL' 1;"{% endif %}>{{ item.icon }}</span>
-<span class="font-label-caps text-label-caps mt-1">{{ item.label }}</span>
+<span class="font-label-caps text-[9px] leading-3 font-bold tracking-[0.02em] uppercase mt-1 whitespace-nowrap max-w-full">{{ item.label }}</span>
 </a>
 {% endfor %}
 </div>
-<div class="mt-auto flex flex-col gap-2 w-full px-2 pb-4">
-<a aria-label="Settings" class="flex flex-col items-center justify-center p-2 rounded-DEFAULT {% if settings_active %}text-primary border-l-2 border-primary bg-surface-container-lowest{% else %}text-on-surface-variant hover:bg-surface-container-high transition-colors{% endif %}" href="/settings">
-<span class="material-symbols-outlined">settings</span>
-<span class="font-label-caps text-label-caps mt-1">Settings</span>
+<div class="mt-auto flex flex-col gap-2 w-full px-1 pb-4">
+<a aria-label="Settings" class="flex flex-col items-center justify-center px-0.5 py-2 rounded-DEFAULT transition-transform scale-95 active:scale-90 overflow-hidden {% if settings_active %}text-primary bg-surface-container-lowest{% else %}text-on-surface-variant hover:bg-surface-container-high transition-colors{% endif %}" href="/settings">
+<span class="material-symbols-outlined" {% if settings_active %}style="font-variation-settings: 'FILL' 1;"{% endif %}>settings</span>
+<span class="font-label-caps text-[9px] leading-3 font-bold tracking-[0.02em] uppercase mt-1 whitespace-nowrap max-w-full">Settings</span>
 </a>
 </div>
 </nav>

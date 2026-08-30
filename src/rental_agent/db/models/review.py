@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from geoalchemy2 import Geography
-from sqlalchemy import Boolean, ForeignKey, Index, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -78,20 +78,32 @@ class ReviewIssue(Base):
 
 
 class MarketingSelection(Base):
-    """Current manual marketing-selection state; one row per listing (02 §19.1).
+    """Current manual marketing-selection state; one row per target (02 §19.1).
 
-    State-change history goes to audit.action_log. Never written by automatic jobs.
+    State-change history goes to audit.action_log. Never written by automatic
+    jobs. A selection targets EITHER a canonical listing OR a company
+    portfolio property (owner request 2026-08-30 — company properties are
+    selected for ads the same way) — exactly one, enforced by CHECK.
     """
 
     __tablename__ = "marketing_selection"
     __table_args__ = (
         UniqueConstraint("canonical_listing_id"),
+        UniqueConstraint("company_property_id"),
+        CheckConstraint(
+            "num_nonnulls(canonical_listing_id, company_property_id) = 1",
+            name="exactly_one_target",
+        ),
         {"schema": "app"},
     )
 
     marketing_selection_id: Mapped[uuid.UUID] = uuid_pk()
-    canonical_listing_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app.canonical_listing.canonical_listing_id"), nullable=False
+    canonical_listing_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.canonical_listing.canonical_listing_id")
+    )
+    company_property_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("app.company_property.company_property_id", ondelete="CASCADE"),
     )
     selection_status: Mapped[str] = enum_text(e.SelectionStatus, "selection_status", nullable=False)
     selected_by: Mapped[str] = mapped_column(Text, nullable=False)
@@ -128,11 +140,20 @@ class ClientShortlistEntry(Base):
     Live filter matches are computed at read time and never persisted here;
     only an explicit human inclusion/exclusion creates a row (08 §16.3).
     Independent of app.marketing_selection by design.
+
+    An entry targets EITHER a canonical listing OR a company portfolio
+    property (owner request 2026-08-29: manage company properties the same
+    way) — exactly one, enforced by CHECK.
     """
 
     __tablename__ = "client_shortlist_entry"
     __table_args__ = (
         UniqueConstraint("client_search_preset_id", "canonical_listing_id"),
+        UniqueConstraint("client_search_preset_id", "company_property_id"),
+        CheckConstraint(
+            "num_nonnulls(canonical_listing_id, company_property_id) = 1",
+            name="exactly_one_target",
+        ),
         {"schema": "app"},
     )
 
@@ -142,8 +163,12 @@ class ClientShortlistEntry(Base):
         ForeignKey("app.client_search_preset.client_search_preset_id"),
         nullable=False,
     )
-    canonical_listing_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app.canonical_listing.canonical_listing_id"), nullable=False
+    canonical_listing_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.canonical_listing.canonical_listing_id")
+    )
+    company_property_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("app.company_property.company_property_id", ondelete="CASCADE"),
     )
     entry_status: Mapped[str] = enum_text(e.ShortlistEntryStatus, "entry_status", nullable=False)
     added_by: Mapped[str] = mapped_column(Text, nullable=False)

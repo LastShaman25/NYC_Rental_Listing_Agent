@@ -18,6 +18,7 @@ from rental_agent.db.models import (
     ClientSearchPreset,
     ClientShortlistEntry,
     CommuteResult,
+    CompanyProperty,
     Destination,
     DuplicateCandidate,
     FactAssertion,
@@ -378,10 +379,26 @@ def fact_history(session: Session, listing_id: uuid.UUID) -> dict[str, list[dict
 
 
 def commutes_for_listing(session: Session, listing_id: uuid.UUID) -> list[dict[str, Any]]:
+    return _shape_commutes(
+        session, CommuteResult.canonical_listing_id == listing_id
+    )
+
+
+def commutes_for_company(
+    session: Session, company_property_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    """Researched commute estimates for a company portfolio property (owner
+    request 2026-08-30: company checks research commutes too)."""
+    return _shape_commutes(
+        session, CommuteResult.company_property_id == company_property_id
+    )
+
+
+def _shape_commutes(session: Session, target_filter: Any) -> list[dict[str, Any]]:
     rows = session.execute(
         select(CommuteResult, Destination)
         .join(Destination, Destination.destination_id == CommuteResult.destination_id)
-        .where(CommuteResult.canonical_listing_id == listing_id)
+        .where(target_filter)
         .order_by(Destination.destination_type, Destination.display_name)
     ).all()
     return [
@@ -556,6 +573,94 @@ def pending_duplicate_candidates(session: Session) -> list[dict[str, Any]]:
 # -- selected / shortlists -----------------------------------------------------
 
 
+def transit_near_point(
+    session: Session, lat: float, lon: float, limit: int = 5
+) -> list[dict[str, Any]]:
+    """Nearest active transit complexes to an arbitrary point, straight-line
+    only (company-property detail page; acquired listings use the persisted
+    TransitAccess rows with routed walking estimates instead)."""
+    rows = session.execute(
+        text(
+            "SELECT stop_name, mode, "
+            "ST_Distance(location_point, "
+            "  ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography)::int AS meters "
+            "FROM app.transit_stop "
+            "WHERE parent_stop_id IS NULL AND active_status = 'ACTIVE' "
+            "  AND ST_DWithin(location_point, "
+            "      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography, 2000) "
+            "ORDER BY meters ASC LIMIT :limit"
+        ),
+        {"lat": lat, "lon": lon, "limit": limit},
+    ).all()
+    # 04 §12: straight-line distance is NEVER presented as a walking time —
+    # walking minutes come only from the pedestrian router (stored on the
+    # property by the check job); this live fallback carries meters only.
+    return [
+        {
+            "stop": stop_name,
+            "mode": mode,
+            "straight_line_m": meters,
+            "walk_min": None,
+            "walking_m": None,
+        }
+        for stop_name, mode, meters in rows
+    ]
+
+
+def selected_company_ids(session: Session) -> set[str]:
+    """Company properties currently selected for marketing."""
+    return {
+        str(row)
+        for row in session.execute(
+            select(MarketingSelection.company_property_id).where(
+                MarketingSelection.company_property_id.is_not(None),
+                MarketingSelection.selection_status == "SELECTED",
+            )
+        ).scalars()
+    }
+
+
+def selected_company_properties(session: Session) -> list[dict[str, Any]]:
+    """Selected company portfolio properties for the Selected page (owner
+    request 2026-08-30: company properties are selected for ads too)."""
+    rows = session.execute(
+        select(CompanyProperty)
+        .join(
+            MarketingSelection,
+            MarketingSelection.company_property_id == CompanyProperty.company_property_id,
+        )
+        .where(MarketingSelection.selection_status == "SELECTED")
+        .order_by(CompanyProperty.name)
+    ).scalars()
+    shaped = []
+    for r in rows:
+        availability = r.availability or {}
+        units = availability.get("available_units", [])
+        rents = [int(u["monthly_rent_usd"]) for u in units if u.get("monthly_rent_usd")]
+        if rents and min(rents) != max(rents):
+            rent_label = f"${min(rents):,}–${max(rents):,}"
+        elif rents:
+            rent_label = f"${rents[0]:,}"
+        else:
+            rent_label = "unknown"
+        page_name = str(availability.get("page_property_name") or "").strip()
+        shaped.append(
+            {
+                "id": str(r.company_property_id),
+                "name": r.name,
+                "page_name": (
+                    page_name if page_name and page_name.lower() != r.name.lower() else None
+                ),
+                "address": ", ".join(p for p in (r.address_text, r.locality) if p),
+                "unit_count": len(units),
+                "rent_label": rent_label,
+                "url": r.resolved_url or r.original_url,
+                "check_status": r.check_status,
+            }
+        )
+    return shaped
+
+
 def shortlist_presets(session: Session) -> list[ClientSearchPreset]:
     return list(
         session.execute(
@@ -567,28 +672,67 @@ def shortlist_presets(session: Session) -> list[ClientSearchPreset]:
 
 
 def shortlist_entries(session: Session, preset_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Entries target either a canonical listing or a company portfolio
+    property (owner request 2026-08-29); one uniform row shape for the UI."""
     rows = session.execute(
-        select(ClientShortlistEntry, CanonicalListing, Address)
-        .join(
+        select(ClientShortlistEntry, CanonicalListing, Address, CompanyProperty)
+        .outerjoin(
             CanonicalListing,
             CanonicalListing.canonical_listing_id == ClientShortlistEntry.canonical_listing_id,
         )
-        .join(Building, Building.building_id == CanonicalListing.building_id)
-        .join(Address, Address.address_id == Building.address_id)
+        .outerjoin(Building, Building.building_id == CanonicalListing.building_id)
+        .outerjoin(Address, Address.address_id == Building.address_id)
+        .outerjoin(
+            CompanyProperty,
+            CompanyProperty.company_property_id == ClientShortlistEntry.company_property_id,
+        )
         .where(ClientShortlistEntry.client_search_preset_id == preset_id)
     ).all()
-    return [
-        {
-            "listing_id": str(listing.canonical_listing_id),
-            "status": entry.entry_status,
-            "address": address.formatted_address,
-            "layout": listing.layout_class,
-            "rent_minor": listing.monthly_rent_minor,
-            "lifecycle": listing.lifecycle_status,
-            "note": entry.note,
-        }
-        for entry, listing, address in rows
-    ]
+    shaped: list[dict[str, Any]] = []
+    for entry, listing, address, company in rows:
+        if company is not None:
+            availability = company.availability or {}
+            units = availability.get("available_units", [])
+            rents = [
+                int(u["monthly_rent_usd"])
+                for u in units
+                if u.get("monthly_rent_usd")
+            ]
+            label = company.name
+            if company.address_text:
+                label = f"{company.name} · {company.address_text}"
+            shaped.append(
+                {
+                    "listing_id": None,
+                    "company_id": str(company.company_property_id),
+                    "status": entry.entry_status,
+                    "address": label,
+                    "layout": "COMPANY",
+                    "rent_minor": min(rents) * 100 if rents else None,
+                    "lifecycle": (
+                        f"{len(units)} avail unit{'s' if len(units) != 1 else ''}"
+                        if company.check_status == "CHECKED"
+                        else company.check_status
+                    ),
+                    "note": entry.note,
+                    "url": company.resolved_url or company.original_url,
+                }
+            )
+        elif listing is not None:
+            shaped.append(
+                {
+                    "listing_id": str(listing.canonical_listing_id),
+                    "company_id": None,
+                    "status": entry.entry_status,
+                    "address": address.formatted_address if address else "[unresolved]",
+                    "layout": listing.layout_class,
+                    "rent_minor": listing.monthly_rent_minor,
+                    "lifecycle": listing.lifecycle_status,
+                    "note": entry.note,
+                    "url": None,
+                }
+            )
+    return shaped
 
 
 # -- operations ----------------------------------------------------------------

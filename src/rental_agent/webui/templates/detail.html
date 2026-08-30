@@ -13,6 +13,11 @@
 <p class="text-on-surface-variant mt-1 flex items-center gap-2">
 <span class="material-symbols-outlined text-sm">location_on</span> {{ d.locality or 'locality unknown' }}
 </p>
+{% if d.company %}
+<p class="font-label-caps text-label-caps text-tertiary mt-2 flex items-center gap-1">
+<span>★</span> COMPANY PROPERTY &middot; <a class="hover:underline" href="/company/{{ d.company_id }}">{{ d.company }}</a>
+</p>
+{% endif %}
 </div>
 <div class="text-right">
 <div class="font-headline-panel text-3xl font-black text-primary tracking-tight">{{ d.rent_major }}<span class="text-lg text-on-surface-variant font-normal">{{ d.rent_suffix }}</span></div>
@@ -305,7 +310,9 @@ Marketing selection is manual-only (07): no automation ever selects a listing.
 <script>
     const loc = {{ location_json | safe }};
     const map = L.map('detail-map', { attributionControl: false });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+    // Esri Light Gray Canvas: keyless, desaturated, no building footprints
+    // (owner request 2026-08-29 — simpler map).
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 16 }).addTo(map);
     if (loc) {
         const icon = L.divIcon({ className: '', html:
             `<div class="ka-marker"><span class="accent" style="background:#3B82F6"></span><span class="label">${loc.label}</span></div>`,

@@ -51,6 +51,8 @@ GEOGRAPHY_TERMS = {
     "nbhd_astoria": '"Astoria"',
     "nbhd_bushwick": '"Bushwick"',
     "nbhd_harlem": '"Harlem"',
+    # Owner request 2026-08-29: Inwood coverage was missing from the map.
+    "nbhd_inwood": '"Inwood"',
     # StreetEasy is NYC-focused; NJ coverage comes from other sources.
 }
 LAYOUT_TERMS = {

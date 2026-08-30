@@ -34,8 +34,15 @@ from sqlalchemy.orm import Session
 from rental_agent.canonical.facts import FactRecorder
 from rental_agent.config.logging import get_logger
 from rental_agent.contracts import enums as e
-from rental_agent.contracts.providers import LlmExecutor, LlmTaskRequest
+from rental_agent.contracts.providers import (
+    LlmExecutor,
+    LlmTaskRequest,
+    SearchProvider,
+    SearchQuery,
+)
 from rental_agent.db.models import (
+    Address,
+    Building,
     CanonicalListing,
     FactAssertion,
     ListingEvent,
@@ -43,6 +50,54 @@ from rental_agent.db.models import (
     MediaAsset,
     MediaAssociation,
     ModelExecution,
+)
+
+# Aggregator/social domains that are never a building's official website.
+_AGGREGATOR_DOMAINS = (
+    "apartments.com",
+    "zillow.com",
+    "streeteasy.com",
+    "rent.com",
+    "renthop.com",
+    "trulia.com",
+    "hotpads.com",
+    "zumper.com",
+    "realtor.com",
+    "apartmentguide.com",
+    "apartmentlist.com",
+    "padmapper.com",
+    "craigslist.org",
+    "rentcafe.com",
+    "rentable.co",
+    "rent-marketplace.com",
+    "cityrealty.com",
+    "propertyshark.com",
+    "loopnet.com",
+    "niche.com",
+    # Real-estate news/press/info sites — they mention buildings but are
+    # never the building's own leasing site (seen live 2026-08-29 polluting
+    # company-portfolio link repair).
+    "newyorkyimby.com",
+    "prnewswire.com",
+    "jerseydigs.com",
+    "njbiz.com",
+    "6sqft.com",
+    "curbed.com",
+    "therealdeal.com",
+    "uhomes.com",
+    "transparentcity.co",
+    "leaseswap.nyc",
+    "luxuryrentalsmanhattan.com",
+    "redfin.com",
+    "compass.com",
+    "theblueground.com",
+    "leasing.ai",
+    "facebook.com",
+    "instagram.com",
+    "yelp.com",
+    "google.com",
+    "youtube.com",
+    "wikipedia.org",
 )
 
 log = get_logger(__name__)
@@ -72,6 +127,13 @@ def _default_poster(url: str, body: dict[str, Any], api_key: str) -> dict[str, A
         return json.loads(response.read().decode("utf-8"))
 
 
+class TavilyQuotaError(RuntimeError):
+    """Tavily rejected the request at the account level (429 rate limit /
+    432 plan usage limit). This is NOT evidence about the page: callers must
+    abort their batch instead of marking every item failed (2026-08-30
+    incident: an exhausted free tier mass-failed 164 company properties)."""
+
+
 class TavilyExtractClient:
     """Fetches page content through Tavily Extract; transport injectable."""
 
@@ -84,6 +146,15 @@ class TavilyExtractClient:
     def extract(self, url: str) -> str | None:
         try:
             response = self._post(EXTRACT_ENDPOINT, {"urls": [url]}, self._api_key)
+        except urllib.error.HTTPError as exc:
+            if exc.code in (429, 432):
+                log.error("tavily_quota_exhausted", status=exc.code)
+                raise TavilyQuotaError(
+                    f"Tavily refused the request (HTTP {exc.code}): plan usage "
+                    "limit or rate limit reached"
+                ) from exc
+            log.warning("tavily_extract_failed", url=url, error=f"HTTP {exc.code}")
+            return None
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             log.warning("tavily_extract_failed", url=url, error=str(exc))
             return None
@@ -159,7 +230,7 @@ def _relevant_excerpt(text: str, cap: int = MAX_PAGE_CHARS) -> str:
         chunk = text[start_idx : min(end_idx, start_idx + (cap - total))]
         pieces.append(chunk)
         total += len(chunk)
-    return "\n…\n".join(pieces)[:cap]
+    return "\n—n".join(pieces)[:cap]
 
 
 _EXTRACTION_INSTRUCTIONS = (
@@ -192,12 +263,65 @@ class EnrichmentOutcome:
 
 class ListingContentEnrichmentService:
     def __init__(
-        self, session: Session, llm: LlmExecutor, extract_client: TavilyExtractClient
+        self,
+        session: Session,
+        llm: LlmExecutor,
+        extract_client: TavilyExtractClient,
+        search_provider: SearchProvider | None = None,
     ) -> None:
+        """search_provider enables the official-building-website fallback
+        (owner decision 2026-08-18): when the aggregator page blocks
+        extraction (apartments.com), find and extract the building's own
+        site, which usually carries full amenities/laundry/fee info."""
         self._s = session
         self._llm = llm
         self._extract = extract_client
+        self._search = search_provider
         self._facts = FactRecorder(session)
+
+    def _find_official_site(self, listing: CanonicalListing) -> str | None:
+        if self._search is None:
+            return None
+        building = self._s.get(Building, listing.building_id)
+        address = self._s.get(Address, building.address_id) if building else None
+        if address is None or not address.address_line_1:
+            return None
+        response = self._search.search(
+            SearchQuery(
+                query=(
+                    f'"{address.address_line_1}" {address.locality} '
+                    "apartments official website leasing"
+                ),
+                max_results=8,
+            )
+        )
+        if response.status is not e.ProviderRequestStatus.SUCCEEDED:
+            return None
+        from urllib.parse import urlparse as _urlparse
+
+        for item in response.items:
+            host = _urlparse(item.url).netloc.removeprefix("www.").lower()
+            if any(host == d or host.endswith("." + d) for d in _AGGREGATOR_DOMAINS):
+                continue
+            if host.endswith((".gov", ".org")):
+                continue  # municipal/nonprofit sites, never a leasing office
+            log.info("official_site_candidate", listing_url=item.url)
+            return item.url
+        return None
+
+    def _page_matches_address(self, text: str, listing: CanonicalListing) -> bool:
+        """The candidate official site must actually mention this building's
+        street address — otherwise wrong-building facts could attach."""
+        building = self._s.get(Building, listing.building_id)
+        address = self._s.get(Address, building.address_id) if building else None
+        if address is None or not address.address_line_1:
+            return False
+        lowered = text.lower()
+        tokens = address.address_line_1.lower().split()
+        if not tokens:
+            return False
+        house_number, street = tokens[0], " ".join(tokens[1:3])
+        return house_number in lowered and street[:12] in lowered
 
     def enrich(
         self, canonical_listing_id: uuid.UUID, *, force: bool = False
@@ -216,7 +340,23 @@ class ListingContentEnrichmentService:
         if link is None:
             return EnrichmentOutcome(canonical_listing_id, "NO_LINK")
 
+        source_url_used = link.source_url
         page_text = self._extract.extract(link.source_url)
+        if not page_text:
+            # Aggregator blocked (e.g. apartments.com): try the building's
+            # official website instead — it has the same facts, first-party.
+            official_url = self._find_official_site(listing)
+            if official_url:
+                official_text = self._extract.extract(official_url)
+                if official_text and self._page_matches_address(official_text, listing):
+                    page_text = official_text
+                    source_url_used = official_url
+                elif official_text:
+                    log.info(
+                        "official_site_address_mismatch",
+                        listing=str(canonical_listing_id),
+                        url=official_url,
+                    )
         if not page_text:
             return EnrichmentOutcome(canonical_listing_id, "EXTRACT_FAILED")
         page_text = _relevant_excerpt(page_text)
@@ -230,7 +370,7 @@ class ListingContentEnrichmentService:
                 task_type=TASK_TYPE,
                 prompt_version=PROMPT_VERSION,
                 output_schema_version=OUTPUT_SCHEMA_VERSION,
-                input_refs={"listing": str(canonical_listing_id), "url": link.source_url},
+                input_refs={"listing": str(canonical_listing_id), "url": source_url_used},
                 input_payload={
                     "instructions": _EXTRACTION_INSTRUCTIONS,
                     "page_text_untrusted": page_text,
@@ -278,7 +418,7 @@ class ListingContentEnrichmentService:
                     prompt_version=PROMPT_VERSION,
                     output_schema_version=OUTPUT_SCHEMA_VERSION,
                     input_hash=content_hash,
-                    input_refs={"listing": str(canonical_listing_id), "url": link.source_url},
+                    input_refs={"listing": str(canonical_listing_id), "url": source_url_used},
                     output_ref=facts.model_dump(),
                     started_at=now,
                     completed_at=now,
@@ -286,7 +426,7 @@ class ListingContentEnrichmentService:
                 )
             )
 
-        written = self._apply(listing, link, facts)
+        written = self._apply(listing, link, facts, source_url_used)
         # Idempotency marker: the page-content hash this listing was enriched at.
         self._facts.record(
             entity_type=e.FactEntityType.LISTING,
@@ -315,7 +455,11 @@ class ListingContentEnrichmentService:
         )
 
     def _apply(
-        self, listing: CanonicalListing, link: ListingSourceLink, facts: ListingPageFacts
+        self,
+        listing: CanonicalListing,
+        link: ListingSourceLink,
+        facts: ListingPageFacts,
+        source_url_used: str,
     ) -> list[str]:
         written: list[str] = []
         listing_id = listing.canonical_listing_id
@@ -424,7 +568,7 @@ class ListingContentEnrichmentService:
             written.append(f"amenities[{len(amenities)}]")
 
         if facts.floor_plan_present:
-            plan_url = facts.floor_plan_url or link.source_url
+            plan_url = facts.floor_plan_url or source_url_used
             exists = self._s.execute(
                 select(MediaAssociation)
                 .join(MediaAsset, MediaAsset.media_asset_id == MediaAssociation.media_asset_id)

@@ -171,7 +171,9 @@ Last Refresh: {{ last_refresh }}
 <script>
     const markers = {{ markers_json | safe }};
     const map = L.map('coverage-map', { zoomControl: false, attributionControl: false });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+    // Esri Light Gray Canvas: keyless, desaturated, no building footprints
+    // (owner request 2026-08-29 — simpler map).
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 16 }).addTo(map);
     const group = [];
     markers.forEach(m => {
         const icon = L.divIcon({ className: '', html:

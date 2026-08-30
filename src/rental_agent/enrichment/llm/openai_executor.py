@@ -32,9 +32,11 @@ SYSTEM_INSTRUCTIONS = (
 )
 
 # Task types allowed to use hosted web-search tooling (04 §19A.3; nearby POI
-# research added by owner decision 2026-08-18 — restaurant/store facts must
-# come from real web sources, never model memory).
-WEB_SEARCH_TASK_TYPES = frozenset({"commute_research", "nearby_poi_research"})
+# research added by owner decision 2026-08-18, amenity research 2026-08-30 —
+# such facts must come from real web sources, never model memory).
+WEB_SEARCH_TASK_TYPES = frozenset(
+    {"commute_research", "nearby_poi_research", "amenity_research"}
+)
 
 
 class OpenAiLlmExecutor:
@@ -47,17 +49,27 @@ class OpenAiLlmExecutor:
         reasoning_effort: str,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         client: Any | None = None,
         web_search_task_types: frozenset[str] = WEB_SEARCH_TASK_TYPES,
     ) -> None:
         if client is None:
             from openai import OpenAI
 
-            client = OpenAI(api_key=api_key)
+            client = OpenAI(api_key=api_key, base_url=base_url)
         self._client = client
         self.model_id = model_id
         self.reasoning_effort = reasoning_effort
         self._web_search_task_types = web_search_task_types
+        # A custom base URL means "any OpenAI-compatible server" (owner
+        # Settings-page feature 2026-08-29). Those servers generally implement
+        # only the chat-completions API — no Responses API, no reasoning
+        # parameter, no hosted web_search tool — so route calls accordingly.
+        # Web-research tasks (commute/POI) still require real web sources; on
+        # an endpoint without search tooling they fail validation honestly.
+        self._chat_api = base_url is not None
+        if base_url is not None:
+            self.provider_code = "openai_compatible"
 
     def execute(self, request: LlmTaskRequest) -> LlmTaskResult:
         tools: list[dict[str, Any]] = []
@@ -79,16 +91,33 @@ class OpenAiLlmExecutor:
         user_payload = json.dumps(envelope, ensure_ascii=False)
         # kwargs stay dict-typed: model IDs/efforts are configuration strings and
         # the SDK's Literal overloads would otherwise pin us to its model list.
-        call_kwargs: dict[str, Any] = {
-            "model": self.model_id,
-            "reasoning": {"effort": self.reasoning_effort},
-            "instructions": SYSTEM_INSTRUCTIONS,
-            "input": user_payload,
-        }
-        if tools:
-            call_kwargs["tools"] = tools
         try:
-            response = self._client.responses.create(**call_kwargs)
+            if self._chat_api:
+                response = self._client.chat.completions.create(
+                    model=self.model_id,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_INSTRUCTIONS},
+                        {"role": "user", "content": user_payload},
+                    ],
+                )
+                text = response.choices[0].message.content if response.choices else None
+                if text:
+                    # Chat-tuned models often fence JSON despite instructions.
+                    text = text.strip()
+                    if text.startswith("```"):
+                        text = text.strip("`\n")
+                        text = text.removeprefix("json").strip()
+            else:
+                call_kwargs: dict[str, Any] = {
+                    "model": self.model_id,
+                    "reasoning": {"effort": self.reasoning_effort},
+                    "instructions": SYSTEM_INSTRUCTIONS,
+                    "input": user_payload,
+                }
+                if tools:
+                    call_kwargs["tools"] = tools
+                response = self._client.responses.create(**call_kwargs)
+                text = getattr(response, "output_text", None)
         except Exception as exc:  # noqa: BLE001 - provider errors become typed results
             log.error("openai_call_failed", task_type=request.task_type, error=type(exc).__name__)
             return LlmTaskResult(
@@ -97,7 +126,6 @@ class OpenAiLlmExecutor:
                 error_code=f"PROVIDER_{type(exc).__name__}",
             )
 
-        text = getattr(response, "output_text", None)
         if not text:
             return LlmTaskResult(
                 status=e.ModelExecutionStatus.FAILED,
@@ -117,6 +145,31 @@ class OpenAiLlmExecutor:
             status=e.ModelExecutionStatus.SUCCEEDED,
             output=output,
             model_id=self.model_id,
-            input_tokens=getattr(usage, "input_tokens", None),
-            output_tokens=getattr(usage, "output_tokens", None),
+            # Responses API says input/output_tokens; chat says prompt/completion.
+            input_tokens=getattr(usage, "input_tokens", None)
+            or getattr(usage, "prompt_tokens", None),
+            output_tokens=getattr(usage, "output_tokens", None)
+            or getattr(usage, "completion_tokens", None),
         )
+
+
+def executor_from_settings(providers: Any, *, flagship: bool = False) -> OpenAiLlmExecutor:
+    """Build the configured executor (default or escalation tier).
+
+    Honors the owner-entered LLM endpoint from the Settings page: a custom
+    ``llm_base_url`` switches to the chat-completions wire path so any
+    OpenAI-compatible provider works. Raises ValueError when no key is set.
+    """
+    key = getattr(providers, "openai_api_key", None)
+    if key is None:
+        raise ValueError("no LLM API key configured (Settings → LLM API)")
+    return OpenAiLlmExecutor(
+        providers.llm_flagship_model_id if flagship else providers.llm_default_model_id,
+        (
+            providers.llm_flagship_reasoning_effort
+            if flagship
+            else providers.llm_default_reasoning_effort
+        ),
+        api_key=key.get_secret_value(),
+        base_url=getattr(providers, "llm_base_url", None) or None,
+    )

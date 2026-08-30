@@ -56,17 +56,125 @@ _DISCARD_TABLES = (
 
 
 def discard_inventory(factory) -> None:
-    """Wipe the listing graph before a fresh manual acquisition."""
+    """Wipe the ACQUIRED listing graph before a fresh manual acquisition.
+
+    Owner reference data must survive, but TRUNCATE ... CASCADE reaches it
+    through FK chains: app.company_property via the building FK,
+    app.destination via its address FK (bug found 2026-08-30 — the anchor
+    registry was silently wiped on every discard), and the company-targeted
+    shortlist entries / marketing selections / commute results (+ their
+    model-execution audit rows) via canonical_listing and ops.job. All of it
+    is snapshotted and restored; acquired-only references reset to NULL.
+    """
+    from sqlalchemy import select
     from sqlalchemy import text as sql_text
+
+    from rental_agent.db.models import (
+        ClientShortlistEntry,
+        CommuteResult,
+        CompanyProperty,
+        Destination,
+        MarketingSelection,
+        ModelExecution,
+    )
+
+    def _snapshot(row) -> dict:
+        return {attr.key: getattr(row, attr.key) for attr in row.__mapper__.column_attrs}
 
     with factory() as session:
         before = session.execute(
             sql_text("SELECT count(*) FROM app.canonical_listing")
         ).scalar()
+        # Geography column via EWKT (WKB round-trip would need shapely).
+        destination_rows = [
+            dict(r)
+            for r in session.execute(
+                sql_text(
+                    "SELECT destination_id, destination_code, destination_type, "
+                    "institution_name, display_name, routing_anchor_name, "
+                    "ST_AsEWKT(routing_anchor_point) AS routing_anchor_point, "
+                    "active, registry_version, created_at, updated_at "
+                    "FROM app.destination"
+                )
+            ).mappings()
+        ]
+        company_rows = [
+            _snapshot(r) for r in session.execute(select(CompanyProperty)).scalars()
+        ]
+        company_entries = [
+            _snapshot(r)
+            for r in session.execute(
+                select(ClientShortlistEntry).where(
+                    ClientShortlistEntry.company_property_id.is_not(None)
+                )
+            ).scalars()
+        ]
+        company_selections = [
+            _snapshot(r)
+            for r in session.execute(
+                select(MarketingSelection).where(
+                    MarketingSelection.company_property_id.is_not(None)
+                )
+            ).scalars()
+        ]
+        company_commutes = [
+            _snapshot(r)
+            for r in session.execute(
+                select(CommuteResult).where(
+                    CommuteResult.company_property_id.is_not(None)
+                )
+            ).scalars()
+        ]
+        execution_ids = {
+            row["model_execution_id"]
+            for row in company_commutes
+            if row.get("model_execution_id")
+        }
+        commute_executions = (
+            [
+                _snapshot(r)
+                for r in session.execute(
+                    select(ModelExecution).where(
+                        ModelExecution.model_execution_id.in_(execution_ids)
+                    )
+                ).scalars()
+            ]
+            if execution_ids
+            else []
+        )
         session.execute(sql_text(f"TRUNCATE {', '.join(_DISCARD_TABLES)} CASCADE"))
+        for row in destination_rows:
+            session.add(Destination(address_id=None, **row))
+        for row in company_rows:
+            row["matched_building_id"] = None  # buildings were just wiped
+            session.add(CompanyProperty(**row))
+        session.flush()
+        for row in commute_executions:
+            row["job_id"] = None  # ops.job was just wiped
+            session.add(ModelExecution(**row))
+        session.flush()
+        for row in company_entries:
+            session.add(ClientShortlistEntry(**row))
+        for row in company_selections:
+            session.add(MarketingSelection(**row))
+        for row in company_commutes:
+            session.add(CommuteResult(**row))
         session.commit()
-    log.info("inventory_discarded", listings_discarded=before)
-    print(f"discarded {before} existing listings (fresh re-acquisition)")
+    log.info(
+        "inventory_discarded",
+        listings_discarded=before,
+        destinations_preserved=len(destination_rows),
+        company_properties_preserved=len(company_rows),
+        company_shortlist_entries_preserved=len(company_entries),
+        company_selections_preserved=len(company_selections),
+        company_commutes_preserved=len(company_commutes),
+    )
+    print(
+        f"discarded {before} existing listings (fresh re-acquisition); "
+        f"kept {len(company_rows)} company properties, "
+        f"{len(destination_rows)} destinations, "
+        f"{len(company_commutes)} company commutes"
+    )
 
 
 def run_weekday_refresh(

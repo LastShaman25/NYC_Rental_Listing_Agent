@@ -77,5 +77,55 @@ Exported to <code>{{ exported }}</code>
 </tbody>
 </table>
 </div>
+<!-- Selected company portfolio properties (owner request 2026-08-30) -->
+<div class="glass-panel rounded-xl p-4">
+<h2 class="font-headline-panel text-headline-panel font-bold text-on-surface border-b border-border-subtle pb-2 mb-3"><span class="text-tertiary">★</span> Selected company properties ({{ company_rows | length }})</h2>
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-border-subtle">
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Property</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Address</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Available units</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal">Rents</th>
+<th class="font-label-caps text-label-caps text-on-surface-variant py-1 font-normal text-right">Actions</th>
+</tr>
+</thead>
+<tbody>
+{% for row in company_rows %}
+<tr class="border-b border-border-subtle hover:bg-surface-container transition-colors">
+<td class="py-1.5 text-xs"><span class="text-tertiary">★</span> <a class="text-on-surface font-semibold hover:text-tertiary" href="/company/{{ row.id }}">{{ row.name }}</a>{% if row.page_name %} <span class="text-on-surface-variant">&middot; {{ row.page_name }}</span>{% endif %}</td>
+<td class="py-1.5 text-xs text-on-surface">{{ row.address or '—' }}</td>
+<td class="py-1.5 text-xs text-on-surface">{{ row.unit_count }}</td>
+<td class="py-1.5 text-xs text-on-surface font-semibold">{{ row.rent_label }}</td>
+<td class="py-1.5 text-xs text-right whitespace-nowrap">
+{% if client_presets %}
+<form action="/actions/shortlist" class="inline-flex items-center gap-1 mr-3" method="post">
+<input name="company_id" type="hidden" value="{{ row.id }}"/>
+<input name="next" type="hidden" value="/selected"/>
+<select class="h-6 px-1 border border-border-subtle rounded-DEFAULT font-body-compact text-[11px] bg-surface-container-lowest" name="preset_id" required>
+<option disabled selected value="">Save for client…</option>
+{% for preset in client_presets %}<option value="{{ preset.id }}">{{ preset.label }}</option>{% endfor %}
+</select>
+<button class="text-primary hover:underline font-semibold" type="submit">Save</button>
+</form>
+{% endif %}
+<a class="inline-flex items-center gap-1 text-primary hover:underline font-semibold mr-3" href="/studio?listing=company:{{ row.id }}"><span class="material-symbols-outlined text-[13px]">edit_note</span>Studio</a>
+{% if row.url %}
+<a class="inline-flex items-center gap-1 text-on-surface-variant hover:text-primary font-semibold mr-3" href="{{ row.url }}" rel="noopener" target="_blank"><span class="material-symbols-outlined text-[13px]">open_in_new</span>Open page</a>
+{% endif %}
+<form action="/actions/company-select/{{ row.id }}" class="inline" method="post">
+<input name="next" type="hidden" value="/selected"/>
+<button class="inline-flex items-center gap-1 text-error hover:underline font-semibold" type="submit" title="Remove from marketing selection">
+<span class="material-symbols-outlined text-[13px]">bookmark_remove</span>Deselect
+</button>
+</form>
+</td>
+</tr>
+{% else %}
+<tr><td class="py-3 text-xs text-on-surface-variant" colspan="5">No company properties selected &mdash; use "Select for Ad" on a company marker's panel on the map.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
 </main>
 {% endblock %}
